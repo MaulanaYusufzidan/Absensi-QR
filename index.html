@@ -21,22 +21,24 @@
     .btn:disabled{opacity:.6;cursor:not-allowed}
     .btn.light{background:#e5e7eb;color:#111827;padding:12px;font-weight:600}
     .result{margin-top:16px;padding:18px;border-radius:14px;display:none}
-    .result.success{display:block;background:#dcfce7;border:1px solid #86efac;color:#166534}
-    .result.duplicate{display:block;background:#fef3c7;border:1px solid #fcd34d;color:#92400e}
-    .result.error{display:block;background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
+    .result.success{display:block;background:#dcfce7;border:2px solid #22c55e;color:#166534}
+    .result.duplicate{display:block;background:#fef3c7;border:2px solid #f59e0b;color:#92400e}
+    .result.error{display:block;background:#fee2e2;border:2px solid #ef4444;color:#991b1b}
     .rt{font-size:18px;font-weight:700;margin-bottom:12px}
-    .sn{font-size:20px;font-weight:700;margin-bottom:8px}
-    .info{font-size:14px;line-height:1.8}
+    .sn{font-size:22px;font-weight:700;margin-bottom:10px}
+    .info{font-size:15px;line-height:1.9}
+    .badge{display:inline-block;padding:2px 12px;border-radius:20px;background:#16a34a;color:#fff;font-weight:700;font-size:13px}
     .today{margin-top:18px}
     .th{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
     .th h2{margin:0;font-size:17px}
     .count{background:#111827;color:#fff;padding:5px 10px;border-radius:20px;font-size:12px}
-    .list{max-height:300px;overflow-y:auto}
+    .list{max-height:320px;overflow-y:auto}
     .item{padding:11px 0;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;gap:10px}
     .an{font-weight:600;font-size:14px}
     .at{font-size:12px;color:#6b7280;white-space:nowrap}
     .sub{font-size:11px;color:#6b7280}
     .loading{text-align:center;padding:20px;color:#6b7280}
+    .sheetlink{display:block;text-align:center;margin-top:12px;font-size:13px;color:#2563eb}
   </style>
 </head>
 <body>
@@ -69,12 +71,24 @@
       <div class="loading">Memuat absensi...</div>
     </div>
     <button class="btn light" onclick="loadTodayAttendance()">🔄 Refresh Absensi</button>
+    <!-- Opsional: isi SHEET_URL di bawah dengan link Google Sheet Anda -->
+    <a id="sheetLink" class="sheetlink" style="display:none" target="_blank" rel="noopener">📊 Buka Google Sheet (sheet "Absensi")</a>
   </div>
 
 </div>
 
 <script>
-  const API_URL = "https://script.google.com/macros/s/AKfycbwqZThHhSudgY6SWio7XEnVJdZxO2z6Du18rnGG4__NoszKzZbwtwVRiO_yI7cMQ9Ys/exec";
+  // ============================================================
+  // 1) URL Web App Apps Script (berakhiran /exec)
+  // ============================================================
+  const API_URL = "https://script.google.com/macros/s/AKfycbyaZ4_g3rRn2LWUMoy9X2CF-k0_ODvXk0kqme1hfUnUdUeK6aDvn0aVx3zw32p8_TMz/exec";
+
+  // ============================================================
+  // 2) (Opsional) Link Google Sheet untuk melihat hasil lengkap.
+  //    Contoh: "https://docs.google.com/spreadsheets/d/XXXX/edit"
+  //    Kosongkan jika tidak ingin menampilkan tombolnya.
+  // ============================================================
+  const SHEET_URL = "";
 
   let scanner = null;
   let running = false;
@@ -83,30 +97,34 @@
   const $ = id => document.getElementById(id);
   const setStatus = m => { $("scannerStatus").textContent = m; };
 
+  const BULAN = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+
   function esc(v){
     return String(v ?? "")
       .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
       .replace(/"/g,"&quot;").replace(/'/g,"&#039;");
   }
 
-  function apiReady(){
-    return API_URL && API_URL.indexOf("ISI_DEPLOYMENT_ID_ANDA") === -1;
+  // 2026-10-04 -> 4 Oktober 2026
+  function tanggalIndo(s){
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    if (!m) return s || "-";
+    return parseInt(m[3],10) + " " + BULAN[parseInt(m[2],10)-1] + " " + m[1];
   }
 
-  // ---------------- API ----------------
-  async function apiGet(action){
-    const r = await fetch(API_URL + "?action=" + encodeURIComponent(action));
-    return r.json();
+  // ---------------- API (GET semua) ----------------
+  async function apiGet(params){
+    const qs = Object.keys(params)
+      .map(k => encodeURIComponent(k) + "=" + encodeURIComponent(params[k]))
+      .join("&");
+    const r = await fetch(API_URL + "?" + qs + "&t=" + Date.now());
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch(e){ throw new Error("Respons server bukan JSON. Pastikan deploy 'New version' dan akses 'Anyone'."); }
   }
 
-  async function apiSubmit(qr){
-    // Body berupa string tanpa header => text/plain => tidak kena preflight CORS
-    const r = await fetch(API_URL, {
-      method: "POST",
-      body: JSON.stringify({ action: "submit", qr: qr })
-    });
-    return r.json();
-  }
+  const apiSubmit = qr => apiGet({ action: "submit", qr: qr });
 
   // ---------------- KAMERA ----------------
   const scanConfig = {
@@ -120,11 +138,6 @@
 
   async function startScanner(){
     const btn = $("cameraButton");
-
-    if (!apiReady()){
-      showResult("error","❌ API_URL belum diisi","Buka file ini di editor, lalu isi API_URL dengan URL Web App (/exec).");
-      return;
-    }
 
     if (!window.isSecureContext){
       showResult("error","❌ Perlu HTTPS","Halaman harus dibuka lewat https:// agar kamera bisa dipakai.");
@@ -146,10 +159,8 @@
       scanner = new Html5Qrcode("reader", { verbose:false });
 
       try {
-        // Kamera belakang (tanpa "exact" supaya laptop tetap bisa)
         await scanner.start({ facingMode: "environment" }, scanConfig, onScanSuccess, () => {});
       } catch (e1){
-        console.warn("facingMode gagal, mencoba daftar kamera:", e1);
         const cams = await Html5Qrcode.getCameras();
         if (!cams || !cams.length) throw new Error("Tidak ada kamera yang ditemukan.");
         const back = cams.find(c => /back|rear|belakang|environment/i.test(c.label)) || cams[cams.length - 1];
@@ -166,10 +177,10 @@
       btn.textContent = "📷 Aktifkan Kamera";
       setStatus("❌ Kamera tidak dapat digunakan.");
 
-      let msg = "Izinkan akses kamera di browser (ikon gembok di address bar), lalu coba lagi.";
+      let msg = "Izinkan akses kamera di browser, lalu coba lagi.";
       const s = String(err);
       if (/NotFound|Tidak ada kamera/i.test(s)) msg = "Kamera tidak ditemukan di perangkat ini.";
-      if (/NotReadable|in use/i.test(s)) msg = "Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu lalu coba lagi.";
+      if (/NotReadable|in use/i.test(s)) msg = "Kamera sedang dipakai aplikasi lain.";
       if (/NotAllowed|Permission/i.test(s)) msg = "Izin kamera ditolak. Klik ikon gembok di address bar > Kamera > Izinkan, lalu refresh.";
 
       showResult("error","❌ Kamera Tidak Aktif", msg);
@@ -184,7 +195,7 @@
     if (!qr) return;
 
     busy = true;
-    setStatus("⏳ QR terbaca. Memproses absensi...");
+    setStatus("⏳ QR terbaca (" + qr + "). Memproses absensi...");
     try { scanner.pause(true); } catch(e){}
 
     try {
@@ -193,7 +204,7 @@
       loadTodayAttendance();
     } catch (err){
       console.error(err);
-      showResult("error","❌ ERROR","Gagal terhubung ke server: " + esc(err.message || err));
+      showResult("error","❌ Gagal terhubung ke server", esc(err.message || err));
     }
 
     setTimeout(() => {
@@ -206,7 +217,7 @@
         $("cameraButton").disabled = false;
         $("cameraButton").textContent = "📷 Aktifkan Kamera";
       }
-    }, 2500);
+    }, 3000);
   }
 
   function renderResult(r){
@@ -223,19 +234,18 @@
         '<div class="info">' +
           'NIS: ' + esc(s.nis || "-") + '<br>' +
           'Kelas: ' + esc(s.className || "-") + '<br>' +
-          'Tanggal: ' + esc(r.date || "-") + '<br>' +
-          'Hari: ' + esc(r.day || "-") + '<br>' +
+          'Hari, Tanggal: <strong>' + esc(r.day || "-") + ', ' + esc(tanggalIndo(r.date)) + '</strong><br>' +
           'Jam: <strong>' + esc(r.time || "-") + '</strong><br>' +
-          'Status: <strong>HADIR</strong>' +
+          'Status: <span class="badge">HADIR</span>' +
         '</div>');
 
     } else if (r.type === "duplicate"){
-      showResult("duplicate","⚠️ SUDAH ABSEN",
+      showResult("duplicate","⚠️ SUDAH ABSEN HARI INI",
         '<div class="sn">' + esc(s.name) + '</div>' +
         '<div class="info">' +
-          'NIS: ' + esc(s.nis || "-") + '<br><br>' +
-          'Siswa ini sudah absen hari ini.<br>' +
-          'Jam sebelumnya: <strong>' + esc(r.time || "-") + '</strong>' +
+          'NIS: ' + esc(s.nis || "-") + '<br>' +
+          'Absen sebelumnya jam: <strong>' + esc(r.time || "-") + '</strong><br>' +
+          'Status: <span class="badge">HADIR</span>' +
         '</div>');
 
     } else {
@@ -251,13 +261,8 @@
 
   // ---------------- ABSENSI HARI INI ----------------
   async function loadTodayAttendance(){
-    if (!apiReady()){
-      $("attendanceList").innerHTML = '<div class="loading">API_URL belum diisi.</div>';
-      return;
-    }
-
     try {
-      const res = await apiGet("today");
+      const res = await apiGet({ action: "today" });
       const list = $("attendanceList");
       const count = $("attendanceCount");
 
@@ -281,11 +286,18 @@
 
     } catch (err){
       console.error(err);
-      $("attendanceList").innerHTML = '<div class="loading">Gagal memuat data absensi.</div>';
+      $("attendanceList").innerHTML = '<div class="loading">Gagal memuat data absensi: ' + esc(err.message) + '</div>';
     }
   }
 
-  window.addEventListener("load", loadTodayAttendance);
+  window.addEventListener("load", () => {
+    if (SHEET_URL){
+      const a = $("sheetLink");
+      a.href = SHEET_URL;
+      a.style.display = "block";
+    }
+    loadTodayAttendance();
+  });
 </script>
 
 </body>
