@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Absensi Siswa</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f3f4f6;color:#111827}
+    .header{background:#111827;color:#fff;padding:18px;text-align:center}
+    .header h1{margin:0;font-size:22px}
+    .header p{margin:6px 0 0;opacity:.75;font-size:13px}
+    .container{max-width:650px;margin:auto;padding:15px}
+    .card{background:#fff;border-radius:16px;padding:16px;box-shadow:0 5px 20px rgba(0,0,0,.08)}
+    #reader{width:100%;min-height:280px;overflow:hidden;border-radius:12px;background:#111827}
+    .placeholder{min-height:280px;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;text-align:center;padding:25px}
+    .placeholder .ic{font-size:48px;margin-bottom:10px}
+    .status{margin-top:14px;padding:14px;border-radius:10px;background:#f3f4f6;text-align:center;font-size:14px}
+    .btn{width:100%;margin-top:12px;padding:14px;border:0;border-radius:10px;background:#111827;color:#fff;cursor:pointer;font-size:15px;font-weight:700}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .btn.light{background:#e5e7eb;color:#111827;padding:12px;font-weight:600}
+    .result{margin-top:16px;padding:18px;border-radius:14px;display:none}
+    .result.success{display:block;background:#dcfce7;border:1px solid #86efac;color:#166534}
+    .result.duplicate{display:block;background:#fef3c7;border:1px solid #fcd34d;color:#92400e}
+    .result.error{display:block;background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
+    .rt{font-size:18px;font-weight:700;margin-bottom:12px}
+    .sn{font-size:20px;font-weight:700;margin-bottom:8px}
+    .info{font-size:14px;line-height:1.8}
+    .today{margin-top:18px}
+    .th{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .th h2{margin:0;font-size:17px}
+    .count{background:#111827;color:#fff;padding:5px 10px;border-radius:20px;font-size:12px}
+    .list{max-height:300px;overflow-y:auto}
+    .item{padding:11px 0;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;gap:10px}
+    .an{font-weight:600;font-size:14px}
+    .at{font-size:12px;color:#6b7280;white-space:nowrap}
+    .sub{font-size:11px;color:#6b7280}
+    .loading{text-align:center;padding:20px;color:#6b7280}
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📷 Absensi Siswa</h1>
+  <p>Scan QR Code kartu siswa</p>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <div id="reader">
+      <div class="placeholder">
+        <div class="ic">📷</div>
+        <div>Tekan tombol di bawah untuk mengaktifkan kamera</div>
+      </div>
+    </div>
+    <div id="scannerStatus" class="status">Kamera belum aktif.</div>
+    <button id="cameraButton" class="btn" onclick="startScanner()">📷 Aktifkan Kamera</button>
+    <div id="result" class="result"></div>
+  </div>
+
+  <div class="card today">
+    <div class="th">
+      <h2>📋 Absensi Hari Ini</h2>
+      <span id="attendanceCount" class="count">0 siswa</span>
+    </div>
+    <div id="attendanceList" class="list">
+      <div class="loading">Memuat absensi...</div>
+    </div>
+    <button class="btn light" onclick="loadTodayAttendance()">🔄 Refresh Absensi</button>
+  </div>
+
+</div>
+
+<script>
+  const API_URL = "https://script.google.com/macros/s/AKfycbwqZThHhSudgY6SWio7XEnVJdZxO2z6Du18rnGG4__NoszKzZbwtwVRiO_yI7cMQ9Ys/exec";
+
+  let scanner = null;
+  let running = false;
+  let busy = false;
+
+  const $ = id => document.getElementById(id);
+  const setStatus = m => { $("scannerStatus").textContent = m; };
+
+  function esc(v){
+    return String(v ?? "")
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+
+  function apiReady(){
+    return API_URL && API_URL.indexOf("ISI_DEPLOYMENT_ID_ANDA") === -1;
+  }
+
+  // ---------------- API ----------------
+  async function apiGet(action){
+    const r = await fetch(API_URL + "?action=" + encodeURIComponent(action));
+    return r.json();
+  }
+
+  async function apiSubmit(qr){
+    // Body berupa string tanpa header => text/plain => tidak kena preflight CORS
+    const r = await fetch(API_URL, {
+      method: "POST",
+      body: JSON.stringify({ action: "submit", qr: qr })
+    });
+    return r.json();
+  }
+
+  // ---------------- KAMERA ----------------
+  const scanConfig = {
+    fps: 10,
+    qrbox: (w, h) => {
+      const s = Math.floor(Math.min(w, h, 280) * 0.9);
+      return { width: s, height: s };
+    },
+    aspectRatio: 1.0
+  };
+
+  async function startScanner(){
+    const btn = $("cameraButton");
+
+    if (!apiReady()){
+      showResult("error","❌ API_URL belum diisi","Buka file ini di editor, lalu isi API_URL dengan URL Web App (/exec).");
+      return;
+    }
+
+    if (!window.isSecureContext){
+      showResult("error","❌ Perlu HTTPS","Halaman harus dibuka lewat https:// agar kamera bisa dipakai.");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "⏳ Membuka kamera...";
+    setStatus("Meminta izin kamera...");
+
+    try {
+      if (scanner){
+        try { if (running) await scanner.stop(); } catch(e){}
+        try { scanner.clear(); } catch(e){}
+        running = false;
+      }
+
+      $("reader").innerHTML = "";
+      scanner = new Html5Qrcode("reader", { verbose:false });
+
+      try {
+        // Kamera belakang (tanpa "exact" supaya laptop tetap bisa)
+        await scanner.start({ facingMode: "environment" }, scanConfig, onScanSuccess, () => {});
+      } catch (e1){
+        console.warn("facingMode gagal, mencoba daftar kamera:", e1);
+        const cams = await Html5Qrcode.getCameras();
+        if (!cams || !cams.length) throw new Error("Tidak ada kamera yang ditemukan.");
+        const back = cams.find(c => /back|rear|belakang|environment/i.test(c.label)) || cams[cams.length - 1];
+        await scanner.start(back.id, scanConfig, onScanSuccess, () => {});
+      }
+
+      running = true;
+      setStatus("✅ Kamera aktif. Arahkan ke QR siswa.");
+      btn.textContent = "📷 Kamera Aktif";
+
+    } catch (err){
+      console.error(err);
+      btn.disabled = false;
+      btn.textContent = "📷 Aktifkan Kamera";
+      setStatus("❌ Kamera tidak dapat digunakan.");
+
+      let msg = "Izinkan akses kamera di browser (ikon gembok di address bar), lalu coba lagi.";
+      const s = String(err);
+      if (/NotFound|Tidak ada kamera/i.test(s)) msg = "Kamera tidak ditemukan di perangkat ini.";
+      if (/NotReadable|in use/i.test(s)) msg = "Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu lalu coba lagi.";
+      if (/NotAllowed|Permission/i.test(s)) msg = "Izin kamera ditolak. Klik ikon gembok di address bar > Kamera > Izinkan, lalu refresh.";
+
+      showResult("error","❌ Kamera Tidak Aktif", msg);
+    }
+  }
+
+  // ---------------- SCAN ----------------
+  async function onScanSuccess(text){
+    if (busy) return;
+
+    const qr = String(text || "").trim();
+    if (!qr) return;
+
+    busy = true;
+    setStatus("⏳ QR terbaca. Memproses absensi...");
+    try { scanner.pause(true); } catch(e){}
+
+    try {
+      const res = await apiSubmit(qr);
+      renderResult(res);
+      loadTodayAttendance();
+    } catch (err){
+      console.error(err);
+      showResult("error","❌ ERROR","Gagal terhubung ke server: " + esc(err.message || err));
+    }
+
+    setTimeout(() => {
+      busy = false;
+      try {
+        scanner.resume();
+        setStatus("✅ Siap scan siswa berikutnya.");
+      } catch(e){
+        setStatus("Tekan Aktifkan Kamera untuk melanjutkan.");
+        $("cameraButton").disabled = false;
+        $("cameraButton").textContent = "📷 Aktifkan Kamera";
+      }
+    }, 2500);
+  }
+
+  function renderResult(r){
+    if (!r){
+      showResult("error","❌ GAGAL","Server tidak mengembalikan hasil.");
+      return;
+    }
+
+    const s = r.student || {};
+
+    if (r.success){
+      showResult("success","✅ ABSENSI BERHASIL",
+        '<div class="sn">' + esc(s.name) + '</div>' +
+        '<div class="info">' +
+          'NIS: ' + esc(s.nis || "-") + '<br>' +
+          'Kelas: ' + esc(s.className || "-") + '<br>' +
+          'Tanggal: ' + esc(r.date || "-") + '<br>' +
+          'Hari: ' + esc(r.day || "-") + '<br>' +
+          'Jam: <strong>' + esc(r.time || "-") + '</strong><br>' +
+          'Status: <strong>HADIR</strong>' +
+        '</div>');
+
+    } else if (r.type === "duplicate"){
+      showResult("duplicate","⚠️ SUDAH ABSEN",
+        '<div class="sn">' + esc(s.name) + '</div>' +
+        '<div class="info">' +
+          'NIS: ' + esc(s.nis || "-") + '<br><br>' +
+          'Siswa ini sudah absen hari ini.<br>' +
+          'Jam sebelumnya: <strong>' + esc(r.time || "-") + '</strong>' +
+        '</div>');
+
+    } else {
+      showResult("error","❌ GAGAL", esc(r.message || "Absensi gagal."));
+    }
+  }
+
+  function showResult(type, title, html){
+    const el = $("result");
+    el.className = "result " + type;
+    el.innerHTML = '<div class="rt">' + title + '</div><div>' + html + '</div>';
+  }
+
+  // ---------------- ABSENSI HARI INI ----------------
+  async function loadTodayAttendance(){
+    if (!apiReady()){
+      $("attendanceList").innerHTML = '<div class="loading">API_URL belum diisi.</div>';
+      return;
+    }
+
+    try {
+      const res = await apiGet("today");
+      const list = $("attendanceList");
+      const count = $("attendanceCount");
+
+      if (!res || !res.success || !res.data || !res.data.length){
+        list.innerHTML = '<div class="loading">Belum ada siswa yang hadir hari ini.</div>';
+        count.textContent = "0 siswa";
+        return;
+      }
+
+      count.textContent = res.data.length + " siswa";
+
+      list.innerHTML = res.data.map(r =>
+        '<div class="item">' +
+          '<div>' +
+            '<div class="an">' + esc(r.name || "-") + '</div>' +
+            '<div class="sub">' + esc(r.nis || "") + ' • ' + esc(r.status || "HADIR") + '</div>' +
+          '</div>' +
+          '<div class="at">' + esc(r.time || "-") + '</div>' +
+        '</div>'
+      ).join("");
+
+    } catch (err){
+      console.error(err);
+      $("attendanceList").innerHTML = '<div class="loading">Gagal memuat data absensi.</div>';
+    }
+  }
+
+  window.addEventListener("load", loadTodayAttendance);
+</script>
+
+</body>
+</html>
