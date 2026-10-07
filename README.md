@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Absensi Siswa QR
 
 Aplikasi absensi siswa berbasis QR. Frontend Next.js (App Router, TypeScript, Tailwind v4),
@@ -45,3 +46,6 @@ node run-e2e.js
 2. Netlify: set env `NEXT_PUBLIC_APPS_SCRIPT_URL`, deploy (`netlify.toml` sudah ada).
 3. Login memakai SHA-256 dari password dan dibandingkan dengan kolom `PASSWORD_HASH` di sheet GURU.
    Buat akun baru lewat halaman Data Guru (admin); password di-hash di server.
+=======
+# Absensi-QR
+>>>>>>> 6b71487bbd4e0428070cdaac0fccaaf081f6713e
