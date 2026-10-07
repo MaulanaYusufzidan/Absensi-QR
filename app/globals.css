@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* Design tokens: semantic colors as space-separated RGB channels. */
+:root {
+  --c-primary: 249 115 22;      /* orange-500 */
+  --c-primary-dark: 234 88 12;  /* orange-600 */
+  --c-secondary: 59 130 246;    /* blue-500 */
+  --c-success: 34 197 94;       /* green-500 */
+  --c-warning: 234 179 8;       /* yellow-500 */
+  --c-danger: 239 68 68;        /* red-500 */
+  --c-background: 249 250 251;  /* gray-50 */
+  --c-surface: 255 255 255;
+  --c-foreground: 17 24 39;     /* gray-900 */
+  --c-muted: 107 114 128;       /* gray-500 */
+}
+
+@theme inline {
+  --color-primary: rgb(var(--c-primary));
+  --color-primary-dark: rgb(var(--c-primary-dark));
+  --color-secondary: rgb(var(--c-secondary));
+  --color-success: rgb(var(--c-success));
+  --color-warning: rgb(var(--c-warning));
+  --color-danger: rgb(var(--c-danger));
+  --color-background: rgb(var(--c-background));
+  --color-surface: rgb(var(--c-surface));
+  --color-foreground: rgb(var(--c-foreground));
+  --color-muted: rgb(var(--c-muted));
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: rgb(var(--c-background));
+  color: rgb(var(--c-foreground));
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--c-primary));
+  outline-offset: 2px;
+}
