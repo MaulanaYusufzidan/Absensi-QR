@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { Input } from "@/components/Input";
@@ -39,12 +40,20 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm rounded-2xl bg-surface p-8 shadow-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-2xl font-bold text-white">
-            Q
+          <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-gray-200">
+            <Image
+              src="/logo.png"
+              alt="Logo SMP IT Dinamika Umat"
+              width={72}
+              height={72}
+              className="h-full w-full object-contain"
+              priority
+            />
           </div>
           <div>
-            <h1 className="text-xl font-bold">Absensi QR SMP IT Dinamika Umat</h1>
-            <p className="text-sm text-muted">Masuk sebagai Guru</p>
+            <h1 className="text-xl font-bold text-foreground">SMP IT Dinamika Umat</h1>
+            <p className="text-sm font-medium text-primary">Sistem Absensi Guru & Siswa</p>
+            <p className="mt-1 text-xs text-muted">Masuk dengan akun Guru / Admin</p>
           </div>
         </div>
 

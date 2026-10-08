@@ -71,13 +71,17 @@ function apiError(code, message) {
   return err;
 }
 
+var SESI_HEADERS = [
+  'ID_SESI', 'ID_GURU', 'ID_JADWAL', 'KELAS', 'MATA_PELAJARAN', 'TANGGAL', 'JAM_MULAI', 'STATUS', 'CREATED_AT'
+];
+
 var ROUTES = {
   login: login,
-  getDashboard: function (p, t) { requireAuth(t); return getDashboard(p); },
-  getClasses: function (p, t) { requireAuth(t); return getClasses(p); },
-  getAttendance: function (p, t) { requireAuth(t); return getAttendance(p); },
+  getDashboard: function (p, t) { return getDashboard(p, requireAuth(t)); },
+  getClasses: function (p, t) { return getClasses(p, requireAuth(t)); },
+  getAttendance: function (p, t) { return getAttendance(p, requireAuth(t)); },
   getTodaySchedule: function (p, t) { return getTodaySchedule(requireAuth(t)); },
-  getSchedules: function (p, t) { requireAuth(t); return getSchedules(); },
+  getSchedules: function (p, t) { return getSchedules(requireAuth(t)); },
   getStudentByQR: function (p, t) { return getStudentByQR(p, requireAuth(t)); },
   scanAttendance: function (p, t) { return scanAttendance(p, requireAuth(t)); },
   getStudents: function (p, t) { requireAdmin(t); return getStudents(); },
@@ -86,7 +90,18 @@ var ROUTES = {
   saveStudent: function (p, t) { requireAdmin(t); return withLock(function () { return saveStudent(p); }); },
   saveTeacher: function (p, t) { requireAdmin(t); return withLock(function () { return saveTeacher(p); }); },
   saveSchedule: function (p, t) { requireAdmin(t); return withLock(function () { return saveSchedule(p); }); },
-  updateSettings: function (p, t) { requireAdmin(t); return withLock(function () { return updateSettings(p); }); }
+  createSchedule: function (p, t) { return withLock(function () { return saveTeacherSchedule(p, requireAuth(t)); }); },
+  saveTeacherSchedule: function (p, t) { return withLock(function () { return saveTeacherSchedule(p, requireAuth(t)); }); },
+  updateSettings: function (p, t) { requireAdmin(t); return withLock(function () { return updateSettings(p); }); },
+
+  // Teacher Attendance Session & Management
+  startAttendanceSession: function (p, t) { return withLock(function () { return startAttendanceSession(p, requireAuth(t)); }); },
+  closeAttendanceSession: function (p, t) { return withLock(function () { return closeAttendanceSession(p, requireAuth(t)); }); },
+  getActiveSession: function (p, t) { return getActiveSession(p, requireAuth(t)); },
+  getSessionAttendance: function (p, t) { return getSessionAttendance(p, requireAuth(t)); },
+  scanSessionAttendance: function (p, t) { return withLock(function () { return scanSessionAttendance(p, requireAuth(t)); }); },
+  updateAttendanceStatus: function (p, t) { return withLock(function () { return updateAttendanceStatus(p, requireAuth(t)); }); },
+  getAttendanceRecap: function (p, t) { return getAttendanceRecap(p, requireAuth(t)); }
 };
 
 /* ------------------------------------------------------------------ */
@@ -134,9 +149,27 @@ function getSpreadsheet() {
   }
 }
 
+function getOrCreateSheet(name, defaultHeaders) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet ? ss.insertSheet(name) : null;
+    if (sheet && defaultHeaders && defaultHeaders.length) {
+      var range = sheet.getRange(1, 1, 1, defaultHeaders.length);
+      range.setNumberFormat('@');
+      range.setValues([defaultHeaders]);
+    }
+  }
+  return sheet;
+}
+
 function getSheet(name) {
-  var sheet = getSpreadsheet().getSheetByName(name);
-  if (!sheet) throw apiError('SERVER_ERROR', 'Sheet ' + name + ' tidak ditemukan.');
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    if (name === 'SESI_ABSENSI') return getOrCreateSheet(name, SESI_HEADERS);
+    throw apiError('SERVER_ERROR', 'Sheet ' + name + ' tidak ditemukan.');
+  }
   return sheet;
 }
 
@@ -144,7 +177,10 @@ function getSheet(name) {
 function readTable(name) {
   var sheet = getSheet(name);
   var values = sheet.getDataRange().getValues();
-  if (!values.length) return { sheet: sheet, headers: [], rows: [] };
+  if (!values.length || (values.length === 1 && !values[0].some(function (v) { return v !== ''; }))) {
+    var def = name === 'SESI_ABSENSI' ? SESI_HEADERS : (name === 'ABSENSI' ? ABSENSI_HEADERS : []);
+    return { sheet: sheet, headers: def, rows: [] };
+  }
   var headers = values[0].map(normHeader);
   var rows = [];
   for (var r = 1; r < values.length; r++) {
@@ -300,6 +336,15 @@ function requireAdmin(token) {
   return user;
 }
 
+function parseAuthOrNull(token) {
+  if (!token) return null;
+  try {
+    return requireAuth(token);
+  } catch (e) {
+    return null;
+  }
+}
+
 function login(p) {
   var username = String(p.username || '').trim().toLowerCase();
   var password = String(p.password || '');
@@ -394,6 +439,20 @@ function mapAttendance(r) {
   };
 }
 
+function mapSession(r) {
+  return {
+    idSesi: r.ID_SESI || '',
+    idGuru: r.ID_GURU || '',
+    idJadwal: r.ID_JADWAL || '',
+    kelas: r.KELAS || '',
+    mataPelajaran: r.MATA_PELAJARAN || '',
+    tanggal: r.TANGGAL || '',
+    jamMulai: r.JAM_MULAI || '',
+    status: r.STATUS || 'ACTIVE',
+    createdAt: r.CREATED_AT || ''
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Read endpoints                                                      */
 /* ------------------------------------------------------------------ */
@@ -406,9 +465,13 @@ function getTeachers() {
   return readTable('GURU').rows.map(mapTeacher);
 }
 
-function getSchedules() {
+function getSchedules(user) {
   var names = teacherNameMap();
-  return readTable('JADWAL').rows.map(function (r) { return mapSchedule(r, names); });
+  var rows = readTable('JADWAL').rows;
+  if (user && user.role !== 'ADMIN') {
+    rows = rows.filter(function (r) { return r.ID_GURU === user.idGuru; });
+  }
+  return rows.map(function (r) { return mapSchedule(r, names); });
 }
 
 function dateParam(p) {
@@ -421,10 +484,16 @@ function attendanceOn(tanggal) {
   return readTable('ABSENSI').rows.filter(function (r) { return r.TANGGAL === tanggal; });
 }
 
-function getDashboard(p) {
+function getDashboard(p, user) {
   var tanggal = dateParam(p);
   var active = readTable('SISWA').rows.filter(function (r) { return r.STATUS !== 'NONAKTIF'; });
   var records = attendanceOn(tanggal);
+
+  // If user is GURU, only count attendance conducted by this teacher
+  if (user && user.role !== 'ADMIN') {
+    records = records.filter(function (r) { return r.ID_GURU === user.idGuru; });
+  }
+
   var count = function (s) { return records.filter(function (r) { return r.STATUS === s; }).length; };
   var seen = {};
   records.forEach(function (r) { seen[r.ID_QR] = true; });
@@ -436,14 +505,20 @@ function getDashboard(p) {
     izin: count('IZIN'),
     sakit: count('SAKIT'),
     alpha: count('ALPHA'),
-    tanpaKeterangan: active.length - present
+    tanpaKeterangan: Math.max(0, active.length - present)
   };
 }
 
-function getClasses(p) {
+function getClasses(p, user) {
   var tanggal = dateParam(p);
   var active = readTable('SISWA').rows.filter(function (r) { return r.STATUS !== 'NONAKTIF'; });
   var records = attendanceOn(tanggal);
+
+  // If user is GURU, only count attendance conducted by this teacher
+  if (user && user.role !== 'ADMIN') {
+    records = records.filter(function (r) { return r.ID_GURU === user.idGuru; });
+  }
+
   var seen = {};
   records.forEach(function (r) { seen[r.ID_QR] = true; });
   var byClass = {};
@@ -462,8 +537,13 @@ function getClasses(p) {
   return Object.keys(byClass).sort().map(function (k) { return byClass[k]; });
 }
 
-function getAttendance(p) {
+function getAttendance(p, user) {
   var rows = readTable('ABSENSI').rows;
+  if (user && user.role !== 'ADMIN') {
+    rows = rows.filter(function (r) { return r.ID_GURU === user.idGuru; });
+  } else if (p.idGuru) {
+    rows = rows.filter(function (r) { return r.ID_GURU === String(p.idGuru); });
+  }
   if (p.tanggal) rows = rows.filter(function (r) { return r.TANGGAL === String(p.tanggal); });
   if (p.kelas) rows = rows.filter(function (r) { return r.KELAS === String(p.kelas); });
   rows.sort(function (a, b) {
@@ -672,11 +752,27 @@ function validHM(v) { return /^([01]?\d|2[0-3]):[0-5]\d$/.test(v); }
 
 function padHM(v) { return v.length === 4 ? '0' + v : v; }
 
-function saveSchedule(p) {
+function saveSchedule(p, user) {
   var j = p.schedule || {};
   var hari = str(j.hari).toUpperCase();
   var mulai = str(j.jamMulai), selesai = str(j.jamSelesai);
-  var kelas = str(j.kelas), mapel = str(j.mataPelajaran), idGuru = str(j.idGuru);
+  var kelas = str(j.kelas), mapel = str(j.mataPelajaran);
+  var idGuru = str(j.idGuru);
+
+  // If user is GURU, enforce idGuru = user.idGuru
+  if (user && user.role !== 'ADMIN') {
+    idGuru = user.idGuru;
+  }
+
+  // If tanggal provided, infer hari if not specified
+  if (j.tanggal && (!hari || hari === '')) {
+    var parts = String(j.tanggal).split('-');
+    if (parts.length === 3) {
+      var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      hari = DAYS[d.getDay()];
+    }
+  }
+
   if (!hari || !mulai || !selesai || !kelas || !mapel || !idGuru) {
     throw apiError('VALIDATION', 'Semua field jadwal wajib diisi.');
   }
@@ -685,9 +781,14 @@ function saveSchedule(p) {
   mulai = padHM(mulai); selesai = padHM(selesai);
   if (toMinutes(selesai) <= toMinutes(mulai)) throw apiError('VALIDATION', 'Jam selesai harus setelah jam mulai.');
   if (!teacherNameMap()[idGuru]) throw apiError('VALIDATION', 'Guru tidak ditemukan.');
+
   var t = readTable('JADWAL');
   var status = str(j.status) === 'NONAKTIF' ? 'NONAKTIF' : 'AKTIF';
   var existing = t.rows.filter(function (r) { return str(j.idJadwal) && r.ID_JADWAL === str(j.idJadwal); })[0];
+  if (existing && user && user.role !== 'ADMIN' && existing.ID_GURU !== user.idGuru) {
+    throw apiError('FORBIDDEN', 'Anda tidak memiliki hak untuk mengubah jadwal ini.');
+  }
+
   var record = {};
   if (existing) Object.keys(existing).forEach(function (k) { record[k] = existing[k]; });
   record.HARI = hari; record.JAM_MULAI = mulai; record.JAM_SELESAI = selesai;
@@ -698,4 +799,408 @@ function saveSchedule(p) {
   }
   writeRecord(t.sheet, t.headers, record, existing ? existing._row : undefined);
   return mapSchedule(record, teacherNameMap());
+}
+
+function saveTeacherSchedule(p, user) {
+  var j = p.schedule || {};
+  var schedPayload = {};
+  Object.keys(j).forEach(function (k) { schedPayload[k] = j[k]; });
+  if (user && user.role !== 'ADMIN') {
+    schedPayload.idGuru = user.idGuru;
+  }
+  return saveSchedule({ schedule: schedPayload }, user);
+}
+
+/* ------------------------------------------------------------------ */
+/* Teacher Attendance Sessions & Actions                              */
+/* ------------------------------------------------------------------ */
+
+function startAttendanceSession(p, user) {
+  var idJadwal = str(p.idJadwal);
+  if (!idJadwal) throw apiError('VALIDATION', 'ID Jadwal wajib diisi.');
+  var schedules = readTable('JADWAL').rows;
+  var sched = schedules.filter(function (r) { return r.ID_JADWAL === idJadwal; })[0];
+  if (!sched) throw apiError('NOT_FOUND', 'Jadwal tidak ditemukan.');
+  if (sched.STATUS === 'NONAKTIF') throw apiError('VALIDATION', 'Jadwal tidak aktif.');
+  if (user.role !== 'ADMIN' && sched.ID_GURU !== user.idGuru) {
+    throw apiError('FORBIDDEN', 'Anda tidak memiliki hak untuk memulai absensi jadwal ini.');
+  }
+
+  var now = nowDate();
+  var tgl = todayISO(now);
+  var sesiTable = readTable('SESI_ABSENSI');
+  var headers = sesiTable.headers.length ? sesiTable.headers : SESI_HEADERS;
+
+  // If there is an existing ACTIVE session for this schedule today, reuse it
+  var existing = sesiTable.rows.filter(function (r) {
+    return r.ID_JADWAL === idJadwal && r.TANGGAL === tgl && r.STATUS === 'ACTIVE';
+  })[0];
+  if (existing) {
+    return mapSession(existing);
+  }
+
+  var idSesi = 'SES' + fmt(now, 'yyyyMMddHHmmss') + String(sesiTable.rows.length + 1);
+  var record = {
+    ID_SESI: idSesi,
+    ID_GURU: sched.ID_GURU,
+    ID_JADWAL: sched.ID_JADWAL,
+    KELAS: sched.KELAS,
+    MATA_PELAJARAN: sched.MATA_PELAJARAN,
+    TANGGAL: tgl,
+    JAM_MULAI: timeHM(now),
+    STATUS: 'ACTIVE',
+    CREATED_AT: fmt(now, 'yyyy-MM-dd HH:mm:ss')
+  };
+  writeRecord(sesiTable.sheet, headers, record);
+  return mapSession(record);
+}
+
+function closeAttendanceSession(p, user) {
+  var idSesi = str(p.idSesi);
+  if (!idSesi) throw apiError('VALIDATION', 'ID Sesi wajib diisi.');
+  var sesiTable = readTable('SESI_ABSENSI');
+  var session = sesiTable.rows.filter(function (r) { return r.ID_SESI === idSesi; })[0];
+  if (!session) throw apiError('NOT_FOUND', 'Sesi tidak ditemukan.');
+  if (user.role !== 'ADMIN' && session.ID_GURU !== user.idGuru) {
+    throw apiError('FORBIDDEN', 'Anda tidak memiliki akses untuk menutup sesi ini.');
+  }
+
+  var updated = {};
+  Object.keys(session).forEach(function (k) { updated[k] = session[k]; });
+  updated.STATUS = 'CLOSED';
+  writeRecord(sesiTable.sheet, sesiTable.headers, updated, session._row);
+
+  // If teacher explicitly confirmed marking unrecorded students as ALPHA
+  if (p.markAlphaForUnrecorded) {
+    var absTable = readTable('ABSENSI');
+    var absHeaders = absTable.headers.length ? absTable.headers : ABSENSI_HEADERS;
+    var activeStudents = readTable('SISWA').rows.filter(function (s) {
+      return s.STATUS !== 'NONAKTIF' && s.KELAS === session.KELAS;
+    });
+
+    var recordedNis = {};
+    absTable.rows.forEach(function (r) {
+      if (r.ID_JADWAL === session.ID_JADWAL && r.TANGGAL === session.TANGGAL) {
+        if (r.NIS) recordedNis[r.NIS] = true;
+        if (r.ID_QR) recordedNis[r.ID_QR] = true;
+      }
+    });
+
+    var names = teacherNameMap();
+    var now = nowDate();
+    var unrecorded = activeStudents.filter(function (s) {
+      return !recordedNis[s.NIS] && !recordedNis[s.ID_QR];
+    });
+
+    unrecorded.forEach(function (s, idx) {
+      var record = {
+        ID_ABSENSI: 'ABS' + fmt(now, 'yyyyMMddHHmmss') + String(absTable.rows.length + idx + 1),
+        ID_JADWAL: session.ID_JADWAL,
+        ID_QR: s.ID_QR || '',
+        NIS: s.NIS,
+        NAMA: s.NAMA,
+        KELAS: s.KELAS,
+        TANGGAL: session.TANGGAL,
+        JAM: timeHM(now),
+        MATA_PELAJARAN: session.MATA_PELAJARAN,
+        ID_GURU: session.ID_GURU,
+        NAMA_GURU: names[session.ID_GURU] || '',
+        STATUS: 'ALPHA',
+        KETERANGAN: 'Tidak hadir (ditutup sesi)'
+      };
+      writeRecord(absTable.sheet, absHeaders, record);
+    });
+  }
+
+  return { closed: true, session: mapSession(updated) };
+}
+
+function getActiveSession(p, user) {
+  var sesiTable = readTable('SESI_ABSENSI');
+  if (p && p.idSesi) {
+    var found = sesiTable.rows.filter(function (r) { return r.ID_SESI === str(p.idSesi); })[0];
+    if (!found) return null;
+    if (user.role !== 'ADMIN' && found.ID_GURU !== user.idGuru) {
+      throw apiError('FORBIDDEN', 'Akses ditolak.');
+    }
+    return mapSession(found);
+  }
+  var tgl = todayISO(nowDate());
+  var activeSessions = sesiTable.rows.filter(function (r) {
+    return r.STATUS === 'ACTIVE' && r.TANGGAL === tgl && (user.role === 'ADMIN' || r.ID_GURU === user.idGuru);
+  });
+  if (p && p.idJadwal) {
+    activeSessions = activeSessions.filter(function (r) { return r.ID_JADWAL === str(p.idJadwal); });
+  }
+  if (!activeSessions.length) return null;
+  return mapSession(activeSessions[activeSessions.length - 1]);
+}
+
+function getSessionAttendance(p, user) {
+  var idSesi = str(p.idSesi);
+  if (!idSesi) throw apiError('VALIDATION', 'ID Sesi wajib diisi.');
+  var sesiTable = readTable('SESI_ABSENSI');
+  var session = sesiTable.rows.filter(function (r) { return r.ID_SESI === idSesi; })[0];
+  if (!session) throw apiError('NOT_FOUND', 'Sesi tidak ditemukan.');
+  if (user.role !== 'ADMIN' && session.ID_GURU !== user.idGuru) {
+    throw apiError('FORBIDDEN', 'Akses ditolak.');
+  }
+
+  var students = readTable('SISWA').rows.filter(function (s) {
+    return s.STATUS !== 'NONAKTIF' && s.KELAS === session.KELAS;
+  });
+
+  var absRows = readTable('ABSENSI').rows.filter(function (r) {
+    return r.ID_JADWAL === session.ID_JADWAL && r.TANGGAL === session.TANGGAL;
+  });
+
+  var absMap = {};
+  absRows.forEach(function (r) {
+    if (r.NIS) absMap[r.NIS] = r;
+    if (r.ID_QR) absMap[r.ID_QR] = r;
+  });
+
+  var items = students.map(function (s) {
+    var rec = absMap[s.NIS] || absMap[s.ID_QR] || null;
+    return {
+      student: mapStudent(s),
+      attendance: rec ? mapAttendance(rec) : null,
+      status: rec ? rec.STATUS : 'BELUM_ABSEN',
+      jam: rec ? rec.JAM : ''
+    };
+  });
+
+  return {
+    session: mapSession(session),
+    items: items
+  };
+}
+
+function scanSessionAttendance(p, user) {
+  var idSesi = str(p.idSesi);
+  var rawQr = str(p.idQr || p.nis || '');
+  if (!idSesi) throw apiError('VALIDATION', 'ID Sesi wajib diisi.');
+  if (!rawQr) throw apiError('VALIDATION', 'QR Code / NIS wajib diisi.');
+
+  var sesiTable = readTable('SESI_ABSENSI');
+  var session = sesiTable.rows.filter(function (r) { return r.ID_SESI === idSesi; })[0];
+  if (!session) throw apiError('NOT_FOUND', 'Sesi tidak ditemukan.');
+  if (session.STATUS !== 'ACTIVE') {
+    throw apiError('SESSION_CLOSED', 'Sesi absensi sudah ditutup.');
+  }
+  if (user.role !== 'ADMIN' && session.ID_GURU !== user.idGuru) {
+    throw apiError('FORBIDDEN', 'Akses ditolak.');
+  }
+
+  // Find student by ID_QR or NIS
+  var siswaRows = readTable('SISWA').rows;
+  var student = siswaRows.filter(function (s) {
+    return s.ID_QR === rawQr || s.NIS === rawQr;
+  })[0];
+  if (!student) {
+    throw apiError('STUDENT_NOT_FOUND', 'Siswa tidak ditemukan.');
+  }
+  if (student.STATUS === 'NONAKTIF') {
+    throw apiError('STUDENT_INACTIVE', 'Siswa tidak aktif.');
+  }
+
+  // Validate Class
+  if (student.KELAS !== session.KELAS) {
+    throw apiError('WRONG_CLASS', 'Siswa tidak terdaftar di kelas ini.');
+  }
+
+  // Validate Duplicate
+  var absTable = readTable('ABSENSI');
+  var dup = absTable.rows.filter(function (r) {
+    return (r.ID_QR === student.ID_QR || r.NIS === student.NIS) &&
+      r.ID_JADWAL === session.ID_JADWAL &&
+      r.TANGGAL === session.TANGGAL;
+  })[0];
+  if (dup) {
+    throw apiError('DUPLICATE_ATTENDANCE', 'Siswa sudah melakukan absensi.');
+  }
+
+  var now = nowDate();
+  var jam = timeHM(now);
+  var names = teacherNameMap();
+  var headers = absTable.headers.length ? absTable.headers : ABSENSI_HEADERS;
+
+  var record = {
+    ID_ABSENSI: 'ABS' + fmt(now, 'yyyyMMddHHmmss') + String(absTable.rows.length + 1),
+    ID_JADWAL: session.ID_JADWAL,
+    ID_QR: student.ID_QR,
+    NIS: student.NIS,
+    NAMA: student.NAMA,
+    KELAS: student.KELAS,
+    TANGGAL: session.TANGGAL,
+    JAM: jam,
+    MATA_PELAJARAN: session.MATA_PELAJARAN,
+    ID_GURU: session.ID_GURU,
+    NAMA_GURU: names[session.ID_GURU] || '',
+    STATUS: 'HADIR',
+    KETERANGAN: str(p.keterangan || '')
+  };
+  writeRecord(absTable.sheet, headers, record);
+
+  return {
+    student: mapStudent(student),
+    status: 'HADIR',
+    jam: jam,
+    attendance: mapAttendance(record)
+  };
+}
+
+function updateAttendanceStatus(p, user) {
+  var validStatuses = ['HADIR', 'TERLAMBAT', 'IZIN', 'SAKIT', 'ALPHA'];
+  var newStatus = str(p.status).toUpperCase();
+  if (validStatuses.indexOf(newStatus) === -1) {
+    throw apiError('VALIDATION', 'Status absensi tidak valid.');
+  }
+
+  var absTable = readTable('ABSENSI');
+  var idAbsensi = str(p.idAbsensi);
+  var record = null;
+
+  if (idAbsensi) {
+    record = absTable.rows.filter(function (r) { return r.ID_ABSENSI === idAbsensi; })[0];
+  } else if (p.nis && p.idJadwal) {
+    var tgl = str(p.tanggal) || todayISO(nowDate());
+    record = absTable.rows.filter(function (r) {
+      return (r.NIS === str(p.nis) || r.ID_QR === str(p.idQr)) &&
+        r.ID_JADWAL === str(p.idJadwal) &&
+        r.TANGGAL === tgl;
+    })[0];
+  }
+
+  var names = teacherNameMap();
+
+  if (record) {
+    // Check authorization: teacher can only edit their own attendance
+    if (user.role !== 'ADMIN' && record.ID_GURU !== user.idGuru) {
+      throw apiError('FORBIDDEN', 'Anda tidak memiliki hak untuk mengubah data absensi ini.');
+    }
+    var updated = {};
+    Object.keys(record).forEach(function (k) { updated[k] = record[k]; });
+    updated.STATUS = newStatus;
+    if (p.keterangan !== undefined) updated.KETERANGAN = str(p.keterangan);
+    writeRecord(absTable.sheet, absTable.headers, updated, record._row);
+    return mapAttendance(updated);
+  }
+
+  // Student had not recorded attendance yet ("Belum Absen") -> create record
+  var nis = str(p.nis);
+  var idJadwal = str(p.idJadwal);
+  if (!nis || !idJadwal) throw apiError('VALIDATION', 'NIS dan ID Jadwal wajib diisi.');
+
+  var student = readTable('SISWA').rows.filter(function (s) { return s.NIS === nis || s.ID_QR === nis; })[0];
+  if (!student) throw apiError('STUDENT_NOT_FOUND', 'Siswa tidak ditemukan.');
+
+  var sched = readTable('JADWAL').rows.filter(function (r) { return r.ID_JADWAL === idJadwal; })[0];
+  if (!sched) throw apiError('NOT_FOUND', 'Jadwal tidak ditemukan.');
+
+  if (user.role !== 'ADMIN' && sched.ID_GURU !== user.idGuru) {
+    throw apiError('FORBIDDEN', 'Anda tidak memiliki hak untuk menambah data absensi untuk jadwal ini.');
+  }
+
+  var now = nowDate();
+  var tgl = str(p.tanggal) || todayISO(now);
+  var headers = absTable.headers.length ? absTable.headers : ABSENSI_HEADERS;
+  var created = {
+    ID_ABSENSI: 'ABS' + fmt(now, 'yyyyMMddHHmmss') + String(absTable.rows.length + 1),
+    ID_JADWAL: sched.ID_JADWAL,
+    ID_QR: student.ID_QR || '',
+    NIS: student.NIS,
+    NAMA: student.NAMA,
+    KELAS: student.KELAS,
+    TANGGAL: tgl,
+    JAM: timeHM(now),
+    MATA_PELAJARAN: sched.MATA_PELAJARAN,
+    ID_GURU: sched.ID_GURU,
+    NAMA_GURU: names[sched.ID_GURU] || '',
+    STATUS: newStatus,
+    KETERANGAN: str(p.keterangan || '')
+  };
+  writeRecord(absTable.sheet, headers, created);
+  return mapAttendance(created);
+}
+
+function getAttendanceRecap(p, user) {
+  var rows = readTable('ABSENSI').rows;
+
+  // Authorization: if role is GURU, enforce idGuru = user.idGuru strictly
+  if (user.role !== 'ADMIN') {
+    rows = rows.filter(function (r) { return r.ID_GURU === user.idGuru; });
+  } else if (p.idGuru) {
+    rows = rows.filter(function (r) { return r.ID_GURU === String(p.idGuru); });
+  }
+
+  var tglMulai = str(p.tanggalMulai || p.tanggal);
+  var tglAkhir = str(p.tanggalAkhir || p.tanggal);
+
+  if (tglMulai && tglAkhir) {
+    rows = rows.filter(function (r) { return r.TANGGAL >= tglMulai && r.TANGGAL <= tglAkhir; });
+  } else if (tglMulai) {
+    rows = rows.filter(function (r) { return r.TANGGAL >= tglMulai; });
+  } else if (tglAkhir) {
+    rows = rows.filter(function (r) { return r.TANGGAL <= tglAkhir; });
+  }
+
+  if (p.kelas) rows = rows.filter(function (r) { return r.KELAS === str(p.kelas); });
+  if (p.mataPelajaran) rows = rows.filter(function (r) { return r.MATA_PELAJARAN === str(p.mataPelajaran); });
+  if (p.status) rows = rows.filter(function (r) { return r.STATUS === str(p.status).toUpperCase(); });
+
+  rows.sort(function (a, b) {
+    var ka = (a.TANGGAL || '') + ' ' + (a.JAM || '');
+    var kb = (b.TANGGAL || '') + ' ' + (b.JAM || '');
+    return ka < kb ? 1 : ka > kb ? -1 : 0;
+  });
+
+  // Calculate recap summaries grouped by Guru + Kelas + Mata Pelajaran
+  var groups = {};
+  rows.forEach(function (r) {
+    var key = (r.NAMA_GURU || r.ID_GURU) + '|' + (r.KELAS || '-') + '|' + (r.MATA_PELAJARAN || '-');
+    if (!groups[key]) {
+      groups[key] = {
+        guru: r.NAMA_GURU || r.ID_GURU,
+        periode: tglMulai === tglAkhir || !tglAkhir ? (tglMulai || 'Semua') : (tglMulai + ' s/d ' + tglAkhir),
+        kelas: r.KELAS,
+        mataPelajaran: r.MATA_PELAJARAN,
+        totalSiswa: 0,
+        hadir: 0,
+        terlambat: 0,
+        izin: 0,
+        sakit: 0,
+        alpha: 0
+      };
+    }
+    var g = groups[key];
+    g.totalSiswa++;
+    if (r.STATUS === 'HADIR') g.hadir++;
+    else if (r.STATUS === 'TERLAMBAT') { g.hadir++; g.terlambat++; }
+    else if (r.STATUS === 'IZIN') g.izin++;
+    else if (r.STATUS === 'SAKIT') g.sakit++;
+    else if (r.STATUS === 'ALPHA') g.alpha++;
+  });
+
+  var summaryList = Object.keys(groups).map(function (k) {
+    var item = groups[k];
+    var pct = item.totalSiswa > 0 ? Math.round((item.hadir / item.totalSiswa) * 100) : 0;
+    return {
+      guru: item.guru,
+      periode: item.periode,
+      kelas: item.kelas,
+      mataPelajaran: item.mataPelajaran,
+      totalSiswa: item.totalSiswa,
+      hadir: item.hadir,
+      izin: item.izin,
+      sakit: item.sakit,
+      alpha: item.alpha,
+      persentaseKehadiran: pct + '%'
+    };
+  });
+
+  return {
+    detail: rows.map(mapAttendance),
+    summary: summaryList
+  };
 }

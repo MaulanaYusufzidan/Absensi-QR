@@ -4,8 +4,11 @@ import { AuthProvider } from "@/lib/auth";
 import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
-  title: "Absensi QR",
-  description: "Aplikasi absensi siswa berbasis QR Code",
+  title: "Absensi QR — SMP IT Dinamika Umat",
+  description: "Sistem Absensi Siswa Berbasis QR Code SMP IT Dinamika Umat",
+  icons: {
+    icon: "/logo.png",
+  },
 };
 
 export const viewport: Viewport = {

@@ -48,14 +48,14 @@ export function AttendanceHistory({ selected, onSelect }: AttendanceHistoryProps
           <button
             onClick={() => onSelect(toISO(addDays(selectedDate, -7)))}
             aria-label="Minggu sebelumnya"
-            className="rounded-full bg-danger p-2 text-white hover:brightness-110"
+            className="rounded-full bg-primary p-2 text-white hover:brightness-110"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={() => onSelect(toISO(addDays(selectedDate, 7)))}
             aria-label="Minggu berikutnya"
-            className="rounded-full bg-danger p-2 text-white hover:brightness-110"
+            className="rounded-full bg-primary p-2 text-white hover:brightness-110"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -73,7 +73,7 @@ export function AttendanceHistory({ selected, onSelect }: AttendanceHistoryProps
               aria-label={iso}
               className={cx(
                 "flex min-h-11 min-w-[60px] flex-col items-center gap-2 rounded-2xl px-3 py-2.5 text-sm font-medium transition-colors",
-                isSelected ? "bg-danger text-white shadow-md" : "bg-gray-100 text-foreground/80 hover:bg-gray-200"
+                isSelected ? "bg-primary text-white shadow-md" : "bg-gray-100 text-foreground/80 hover:bg-gray-200"
               )}
             >
               <span>{DAY_LABEL[d.getUTCDay()]}</span>

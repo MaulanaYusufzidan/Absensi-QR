@@ -103,6 +103,9 @@ function buildDb() {
       "MATA_PELAJARAN", "ID_GURU", "NAMA_GURU", "STATUS", "KETERANGAN",
     ]]),
     QR_CETAK: makeSheet("QR_CETAK", [["ID_QR"]]),
+    SESI_ABSENSI: makeSheet("SESI_ABSENSI", [[
+      "ID_SESI", "ID_GURU", "ID_JADWAL", "KELAS", "MATA_PELAJARAN", "TANGGAL", "JAM_MULAI", "STATUS", "CREATED_AT",
+    ]]),
     PENGATURAN: makeSheet("PENGATURAN", [
       ["KEY", "VALUE"],
       ["NAMA_SEKOLAH", "SMP Uji"],
@@ -125,8 +128,20 @@ function createSandbox(db, startAt) {
   const ctx = {
     console, Date: FixedDate, JSON, Math, parseInt, String, Object, Array, RegExp, isNaN, Error,
     SpreadsheetApp: {
-      openById: () => ({ getSheetByName: (n) => db[n] || null }),
-      getActiveSpreadsheet: () => ({ getSheetByName: (n) => db[n] || null }),
+      openById: () => ({
+        getSheetByName: (n) => db[n] || null,
+        insertSheet: (n) => {
+          if (!db[n]) db[n] = makeSheet(n, []);
+          return db[n];
+        },
+      }),
+      getActiveSpreadsheet: () => ({
+        getSheetByName: (n) => db[n] || null,
+        insertSheet: (n) => {
+          if (!db[n]) db[n] = makeSheet(n, []);
+          return db[n];
+        },
+      }),
     },
     LockService: {
       getScriptLock: () => ({
@@ -445,6 +460,320 @@ function run() {
   });
   test("unknown action -> VALIDATION", () => {
     assert.strictEqual(fresh().call("dropEverything", {}, "").code, "VALIDATION");
+  });
+
+  console.log("teacher sessions & recap");
+  test("teacher creates schedule for themselves, cannot impersonate other teacher", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    // Guru 1 creates schedule: idGuru automatically bound to G001
+    const res = sb.call("createSchedule", {
+      schedule: { hari: "RABU", jamMulai: "08:00", jamSelesai: "09:30", kelas: "7", mataPelajaran: "IPA", idGuru: "G002" }
+    }, tGuru1);
+    assert.strictEqual(res.success, true, JSON.stringify(res));
+    assert.strictEqual(res.data.idGuru, "G001"); // Enforced to G001, ignored attempt to impersonate G002
+    assert.strictEqual(res.data.kelas, "7");
+    assert.strictEqual(res.data.mataPelajaran, "IPA");
+  });
+
+  test("start session creates ACTIVE session and prevents unauthorized access", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    // Guru 2 cannot start session for Guru 1's schedule (J001)
+    const fail = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru2);
+    assert.strictEqual(fail.code, "FORBIDDEN");
+
+    // Guru 1 starts session
+    const res = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru1);
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.data.status, "ACTIVE");
+    assert.strictEqual(res.data.idJadwal, "J001");
+    assert.strictEqual(res.data.kelas, "7");
+
+    // Re-calling startAttendanceSession returns the same active session
+    const res2 = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru1);
+    assert.strictEqual(res2.data.idSesi, res.data.idSesi);
+  });
+
+  test("scanSessionAttendance validates QR, class, duplicates, and inactive students", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const ses = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru1).data;
+
+    // Scan student 1 (Ahmad - Class 7) -> HADIR
+    const scan1 = sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26001" }, tGuru1);
+    assert.strictEqual(scan1.success, true, JSON.stringify(scan1));
+    assert.strictEqual(scan1.data.student.nama, "Ahmad");
+    assert.strictEqual(scan1.data.status, "HADIR");
+
+    // Duplicate scan -> DUPLICATE_ATTENDANCE
+    const dup = sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26001" }, tGuru1);
+    assert.strictEqual(dup.code, "DUPLICATE_ATTENDANCE");
+
+    // Scan student from wrong class (Fani is Class 8, session is Class 7)
+    const wrongClass = sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26006" }, tGuru1);
+    assert.strictEqual(wrongClass.code, "WRONG_CLASS");
+
+    // Scan unknown student
+    const unknown = sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "UNKNOWN999" }, tGuru1);
+    assert.strictEqual(unknown.code, "STUDENT_NOT_FOUND");
+
+    // Scan inactive student (Eko is NONAKTIF)
+    const inactive = sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26005" }, tGuru1);
+    assert.strictEqual(inactive.code, "STUDENT_INACTIVE");
+  });
+
+  test("closeAttendanceSession disables further scanning and marks unrecorded students as ALPHA if requested", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const ses = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru1).data;
+
+    // Scan Ahmad (DU26001)
+    sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26001" }, tGuru1);
+
+    // Close session with markAlphaForUnrecorded: true
+    const closed = sb.call("closeAttendanceSession", { idSesi: ses.idSesi, markAlphaForUnrecorded: true }, tGuru1);
+    assert.strictEqual(closed.success, true);
+    assert.strictEqual(closed.data.session.status, "CLOSED");
+
+    // Subsequent scan attempt is rejected because session is closed
+    const afterClose = sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26002" }, tGuru1);
+    assert.strictEqual(afterClose.code, "SESSION_CLOSED");
+
+    // Check attendance records: Ahmad is HADIR, other active class 7 students (Budi, Citra, Dewi) are ALPHA
+    const list = sb.call("getSessionAttendance", { idSesi: ses.idSesi }, tGuru1).data.items;
+    const ahmad = list.find((x) => x.student.nama === "Ahmad");
+    const budi = list.find((x) => x.student.nama === "Budi");
+    assert.strictEqual(ahmad.status, "HADIR");
+    assert.strictEqual(budi.status, "ALPHA");
+  });
+
+  test("updateAttendanceStatus updates existing record without duplicates, enforces teacher authorization", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+    const ses = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru1).data;
+
+    // Scan Ahmad -> HADIR
+    sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26001" }, tGuru1);
+    const initialRows = sb.db.ABSENSI.data.length;
+
+    // Guru 2 cannot edit Guru 1's record
+    const fail = sb.call("updateAttendanceStatus", {
+      idJadwal: "J001",
+      nis: "101",
+      status: "IZIN",
+      tanggal: "2026-10-05"
+    }, tGuru2);
+    assert.strictEqual(fail.code, "FORBIDDEN");
+
+    // Guru 1 edits Ahmad: HADIR -> IZIN
+    const editRes = sb.call("updateAttendanceStatus", {
+      idJadwal: "J001",
+      nis: "101",
+      status: "IZIN",
+      keterangan: "Surat izin dari orang tua",
+      tanggal: "2026-10-05"
+    }, tGuru1);
+    assert.strictEqual(editRes.success, true);
+    assert.strictEqual(editRes.data.status, "IZIN");
+    assert.strictEqual(editRes.data.keterangan, "Surat izin dari orang tua");
+
+    // Must NOT add duplicate rows!
+    assert.strictEqual(sb.db.ABSENSI.data.length, initialRows);
+  });
+
+  test("getAttendanceRecap enforces strict teacher isolation and calculates summary percentages", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    // Create session and records for Guru 1
+    const ses = sb.call("startAttendanceSession", { idJadwal: "J001" }, tGuru1).data;
+    sb.call("scanSessionAttendance", { idSesi: ses.idSesi, idQr: "DU26001" }, tGuru1);
+
+    // Guru 1 requests recap: only sees their own attendance
+    const recapGuru1 = sb.call("getAttendanceRecap", { tanggalMulai: "2026-10-05", tanggalAkhir: "2026-10-05" }, tGuru1);
+    assert.strictEqual(recapGuru1.success, true);
+    assert.strictEqual(recapGuru1.data.detail.length, 1);
+    assert.strictEqual(recapGuru1.data.detail[0].nama, "Ahmad");
+    assert.strictEqual(recapGuru1.data.summary[0].hadir, 1);
+    assert.strictEqual(recapGuru1.data.summary[0].persentaseKehadiran, "100%");
+
+    // Guru 2 requests recap: sees 0 records even if passing idGuru: G001
+    const recapGuru2 = sb.call("getAttendanceRecap", { idGuru: "G001", tanggalMulai: "2026-10-05" }, tGuru2);
+    assert.strictEqual(recapGuru2.data.detail.length, 0);
+  });
+
+  console.log("strict teacher data isolation (Test 1 - Test 8)");
+
+  test("Test 1 & 2: Login as Guru 01 vs Guru 02 - each only sees their own data", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    // Add schedule for Guru 2 (J002) in class 8
+    sb.db.JADWAL.data.push(["J002", "SENIN", "07:00", "08:30", "8", "Bahasa Inggris", "G002", "AKTIF", "2026-10-01"]);
+
+    // Guru 1 queries schedules: sees J001 (Matematika), not J002
+    const schedG1 = sb.call("getSchedules", {}, tGuru1).data;
+    assert.strictEqual(schedG1.some((s) => s.idJadwal === "J001"), true);
+    assert.strictEqual(schedG1.some((s) => s.idJadwal === "J002"), false);
+
+    // Guru 2 queries schedules: sees J002 (Bahasa Inggris), not J001
+    const schedG2 = sb.call("getSchedules", {}, tGuru2).data;
+    assert.strictEqual(schedG2.some((s) => s.idJadwal === "J002"), true);
+    assert.strictEqual(schedG2.some((s) => s.idJadwal === "J001"), false);
+  });
+
+  test("Test 3: Guru 01 attempts to open/modify Guru 02 schedule or session -> FORBIDDEN (403)", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    sb.db.JADWAL.data.push(["J002", "SENIN", "07:00", "08:30", "8", "Bahasa Inggris", "G002", "AKTIF", "2026-10-01"]);
+
+    // Guru 1 attempts to start attendance session on Guru 2's schedule
+    const startRes = sb.call("startAttendanceSession", { idJadwal: "J002" }, tGuru1);
+    assert.strictEqual(startRes.success, false);
+    assert.strictEqual(startRes.code, "FORBIDDEN");
+
+    // Guru 2 starts their session legally
+    const sesG2 = sb.call("startAttendanceSession", { idJadwal: "J002" }, tGuru2).data;
+
+    // Guru 1 attempts to get student list of Guru 2's session
+    const accessRes = sb.call("getSessionAttendance", { idSesi: sesG2.idSesi }, tGuru1);
+    assert.strictEqual(accessRes.success, false);
+    assert.strictEqual(accessRes.code, "FORBIDDEN");
+
+    // Guru 1 attempts to close Guru 2's session
+    const closeRes = sb.call("closeAttendanceSession", { idSesi: sesG2.idSesi }, tGuru1);
+    assert.strictEqual(closeRes.success, false);
+    assert.strictEqual(closeRes.code, "FORBIDDEN");
+
+    // Guru 1 attempts to modify Guru 2's schedule directly
+    const editSchedRes = sb.call("saveTeacherSchedule", {
+      schedule: { idJadwal: "J002", hari: "SENIN", jamMulai: "07:00", jamSelesai: "08:30", kelas: "8", mataPelajaran: "Hack", idGuru: "G002" }
+    }, tGuru1);
+    assert.strictEqual(editSchedRes.success, false);
+    assert.strictEqual(editSchedRes.code, "FORBIDDEN");
+  });
+
+  test("Test 4 & 5: Guru 01 and Guru 02 report/recap export isolation", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    sb.db.JADWAL.data.push(["J002", "SENIN", "07:00", "08:30", "8", "Bahasa Inggris", "G002", "AKTIF", "2026-10-01"]);
+
+    // Guru 1 records Ahmad (DU26001) in Class 7
+    sb.call("scanAttendance", { idQr: "DU26001" }, tGuru1);
+
+    // Guru 2 records Fani (DU26006) in Class 8
+    const sesG2 = sb.call("startAttendanceSession", { idJadwal: "J002" }, tGuru2).data;
+    sb.call("scanSessionAttendance", { idSesi: sesG2.idSesi, idQr: "DU26006" }, tGuru2);
+
+    // Guru 1 report export: ONLY contains Ahmad, 0 records from Guru 2
+    const recapG1 = sb.call("getAttendanceRecap", { tanggalMulai: "2026-10-05", tanggalAkhir: "2026-10-05" }, tGuru1).data;
+    assert.strictEqual(recapG1.detail.length, 1);
+    assert.strictEqual(recapG1.detail[0].idGuru, "G001");
+    assert.strictEqual(recapG1.detail[0].nama, "Ahmad");
+    assert.strictEqual(recapG1.summary[0].kelas, "7");
+
+    // Guru 2 report export: ONLY contains Fani, 0 records from Guru 1
+    const recapG2 = sb.call("getAttendanceRecap", { tanggalMulai: "2026-10-05", tanggalAkhir: "2026-10-05" }, tGuru2).data;
+    assert.strictEqual(recapG2.detail.length, 1);
+    assert.strictEqual(recapG2.detail[0].idGuru, "G002");
+    assert.strictEqual(recapG2.detail[0].nama, "Fani");
+    assert.strictEqual(recapG2.summary[0].kelas, "8");
+
+    // Even if Guru 1 maliciously passes idGuru: 'G002' in query, server ignores it and keeps G001
+    const hijacked = sb.call("getAttendanceRecap", { idGuru: "G002", tanggalMulai: "2026-10-05", tanggalAkhir: "2026-10-05" }, tGuru1).data;
+    assert.strictEqual(hijacked.detail.length, 1);
+    assert.strictEqual(hijacked.detail[0].idGuru, "G001");
+  });
+
+  test("Test 6: Guru 01 creates a new schedule -> strictly belongs to Guru 01", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    // Guru 1 creates schedule, maliciously trying to assign it to Guru 2 (G002)
+    const newSched = sb.call("createSchedule", {
+      schedule: {
+        hari: "SELASA",
+        jamMulai: "08:00",
+        jamSelesai: "09:30",
+        kelas: "7",
+        mataPelajaran: "Fisika",
+        idGuru: "G002" // spoof attempt
+      }
+    }, tGuru1).data;
+
+    // Server must override idGuru with authenticated user (G001)
+    assert.strictEqual(newSched.idGuru, "G001");
+
+    // Guru 1 can see it
+    const g1List = sb.call("getSchedules", {}, tGuru1).data;
+    assert.strictEqual(g1List.some((s) => s.idJadwal === newSched.idJadwal), true);
+
+    // Guru 2 CANNOT see it
+    const g2List = sb.call("getSchedules", {}, tGuru2).data;
+    assert.strictEqual(g2List.some((s) => s.idJadwal === newSched.idJadwal), false);
+  });
+
+  test("Test 7: Guru 01 performs manual attendance -> strictly bound to Guru 01", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    // Guru 1 marks manual attendance for Budi (DU26002, NIS 102) in J001
+    const res = sb.call("updateAttendanceStatus", {
+      idJadwal: "J001",
+      nis: "102",
+      status: "HADIR",
+      keterangan: "Absensi Manual",
+      tanggal: "2026-10-05"
+    }, tGuru1);
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(res.data.idGuru, "G001");
+    assert.strictEqual(res.data.status, "HADIR");
+
+    // Guru 2 tries to update that attendance record -> FORBIDDEN
+    const editByG2 = sb.call("updateAttendanceStatus", {
+      idAbsensi: res.data.idAbsensi,
+      idJadwal: "J001",
+      nis: "102",
+      status: "ALPHA"
+    }, tGuru2);
+    assert.strictEqual(editByG2.success, false);
+    assert.strictEqual(editByG2.code, "FORBIDDEN");
+  });
+
+  test("Test 8: Guru 01 performs QR scan attendance -> strictly bound to Guru 01 and isolated", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+    const tGuru2 = tokenOf(sb, "guru2", "test-guru-2");
+
+    // Guru 1 scans student Ahmad (DU26001)
+    const scanRes = sb.call("scanAttendance", { idQr: "DU26001" }, tGuru1);
+    assert.strictEqual(scanRes.success, true);
+    assert.strictEqual(scanRes.data.schedule.idGuru, "G001");
+
+    // Check attendance row in database: ID_GURU is G001
+    const lastRow = sb.db.ABSENSI.data[sb.db.ABSENSI.data.length - 1];
+    assert.strictEqual(lastRow[9], "G001"); // ID_GURU index in ABSENSI
+
+    // Guru 2 cannot see this attendance in getAttendance
+    const hGuru2 = sb.call("getAttendance", { tanggal: "2026-10-05" }, tGuru2).data;
+    assert.strictEqual(hGuru2.length, 0);
+
+    // Guru 1 sees it in getAttendance
+    const hGuru1 = sb.call("getAttendance", { tanggal: "2026-10-05" }, tGuru1).data;
+    assert.strictEqual(hGuru1.length, 1);
+    assert.strictEqual(hGuru1[0].nama, "Ahmad");
   });
 
   console.log("\n" + pass + "/" + (pass + failures.length) + " passed");

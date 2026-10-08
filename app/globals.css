@@ -2,8 +2,8 @@
 
 /* Design tokens: semantic colors as space-separated RGB channels. */
 :root {
-  --c-primary: 249 115 22;      /* orange-500 */
-  --c-primary-dark: 234 88 12;  /* orange-600 */
+  --c-primary: 58 125 92;       /* sage green */
+  --c-primary-dark: 46 99 73;   /* dark sage green */
   --c-secondary: 59 130 246;    /* blue-500 */
   --c-success: 34 197 94;       /* green-500 */
   --c-warning: 234 179 8;       /* yellow-500 */
@@ -46,3 +46,29 @@ body {
   outline: 2px solid rgb(var(--c-primary));
   outline-offset: 2px;
 }
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print,
+  nav,
+  header,
+  aside,
+  button,
+  .btn-print-hide {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-page {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+}
+

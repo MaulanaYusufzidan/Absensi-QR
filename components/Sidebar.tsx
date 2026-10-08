@@ -1,10 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   ScanLine,
+  UserCheck,
   Users,
   ClipboardList,
   CalendarDays,
@@ -27,7 +29,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["GURU", "ADMIN"] },
   { href: "/scan", label: "Scan QR", icon: ScanLine, roles: ["GURU", "ADMIN"] },
-  { href: "/attendance", label: "Absensi", icon: ClipboardList, roles: ["GURU", "ADMIN"] },
+  { href: "/manual-attendance", label: "Absensi Manual", icon: UserCheck, roles: ["GURU", "ADMIN"] },
+  { href: "/attendance", label: "Laporan Absensi", icon: ClipboardList, roles: ["GURU", "ADMIN"] },
   { href: "/schedule", label: "Jadwal", icon: CalendarDays, roles: ["GURU", "ADMIN"] },
   { href: "/students", label: "Siswa", icon: Users, roles: ["ADMIN"] },
   { href: "/teachers", label: "Guru", icon: UserCog, roles: ["ADMIN"] },
@@ -50,13 +53,24 @@ export function Sidebar({ mobile, onNavigate }: { mobile?: boolean; onNavigate?:
       aria-label="Navigasi utama"
     >
       <div>
-        <div className="flex items-center gap-2 px-6 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary font-bold text-white">
-            Q
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+          <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1 ring-1 ring-gray-200">
+            <Image
+              src="/logo.png"
+              alt="Logo SMP IT Dinamika Umat"
+              width={36}
+              height={36}
+              className="h-full w-full object-contain"
+            />
           </div>
-          <span className="text-lg font-bold">Absensi QR</span>
+          <div className="min-w-0">
+            <span className="block truncate text-sm font-bold leading-tight text-foreground">
+              SMP IT Dinamika Umat
+            </span>
+            <span className="block text-xs font-semibold text-primary">Sistem Absensi</span>
+          </div>
         </div>
-        <ul className="flex flex-col gap-1 px-3">
+        <ul className="flex flex-col gap-1 px-3 mt-3">
           {items.map((item) => {
             const active = pathname?.startsWith(item.href);
             const Icon = item.icon;

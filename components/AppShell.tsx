@@ -54,15 +54,23 @@ export function AppShell({
       )}
 
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-gray-200 bg-white/80 px-4 py-3 backdrop-blur sm:px-6">
-          <button
-            className="rounded-lg p-2 hover:bg-gray-100 lg:hidden"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Buka menu"
-          >
-            <Menu className="h-6 w-6" />
-          </button>
-          <h1 className="text-lg font-bold sm:text-xl">{title}</h1>
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-gray-200 bg-white/80 px-4 py-3 backdrop-blur sm:px-6">
+          <div className="flex items-center gap-3">
+            <button
+              className="rounded-lg p-2 hover:bg-gray-100 lg:hidden"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Buka menu"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+            <div>
+              <h1 className="text-lg font-bold sm:text-xl">{title}</h1>
+              <p className="text-[11px] font-medium text-muted lg:hidden">SMP IT Dinamika Umat</p>
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 text-xs font-medium text-muted">
+            <span>SMP IT Dinamika Umat</span>
+          </div>
         </header>
         <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
       </div>

@@ -19,6 +19,15 @@ export type ApiAction =
   | "saveStudent"
   | "saveTeacher"
   | "saveSchedule"
+  | "createSchedule"
+  | "saveTeacherSchedule"
+  | "startAttendanceSession"
+  | "closeAttendanceSession"
+  | "getActiveSession"
+  | "getSessionAttendance"
+  | "scanSessionAttendance"
+  | "updateAttendanceStatus"
+  | "getAttendanceRecap"
   | "updateSettings";
 
 /**
@@ -47,10 +56,21 @@ export async function callApi<T>(
     });
 
     if (!res.ok) {
+      let detail = "";
+      try {
+        const text = await res.text();
+        if (text.includes("accounts.google.com") || text.includes("ServiceLogin")) {
+          detail = " — Akses ditolak Google. Pastikan Deployment disetel 'Who has access: Anyone / Siapa saja'";
+        } else if (text && text.length < 120) {
+          detail = ` — ${text.trim()}`;
+        }
+      } catch {
+        // ignore text parsing
+      }
       return {
         success: false,
         code: "SERVER_ERROR",
-        message: "Server absensi tidak dapat dihubungi.",
+        message: `Server absensi tidak dapat dihubungi (HTTP ${res.status}${detail}).`,
       };
     }
 
@@ -61,11 +81,12 @@ export async function callApi<T>(
       window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
     }
     return json;
-  } catch {
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
     return {
       success: false,
       code: "NETWORK_ERROR",
-      message: "Gagal terhubung ke server absensi. Silakan coba lagi.",
+      message: `Gagal terhubung ke server absensi (${errMsg}). Periksa koneksi internet atau pengaturan Deployment Apps Script.`,
     };
   }
 }

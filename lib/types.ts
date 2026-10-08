@@ -103,6 +103,52 @@ export interface ScanResult {
   };
 }
 
+export type SessionStatus = "ACTIVE" | "CLOSED";
+
+export interface AttendanceSession {
+  idSesi: string;
+  idGuru: string;
+  idJadwal: string;
+  kelas: string;
+  mataPelajaran: string;
+  tanggal: string;
+  jamMulai: string;
+  status: SessionStatus;
+  createdAt?: string;
+}
+
+export interface SessionStudentItem {
+  student: Student;
+  attendance: Attendance | null;
+  status: AttendanceStatus | "BELUM_ABSEN";
+  jam: string;
+}
+
+export interface SessionAttendanceData {
+  session: AttendanceSession;
+  items: SessionStudentItem[];
+}
+
+export interface RecapSummaryItem {
+  guru: string;
+  periode: string;
+  kelas: string;
+  mataPelajaran: string;
+  totalSiswa: number;
+  hadir: number;
+  terlambat: number;
+  izin: number;
+  sakit: number;
+  alpha: number;
+  persentaseKehadiran: string;
+}
+
+export interface AttendanceRecapData {
+  detail: Attendance[];
+  summary: RecapSummaryItem[];
+}
+
 export type ApiResponse<T> =
   | { success: true; data: T }
   | { success: false; code: string; message: string };
+
