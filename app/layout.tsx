@@ -7,7 +7,12 @@ export const metadata: Metadata = {
   title: "Absensi QR — SMP IT Dinamika Umat",
   description: "Sistem Absensi Siswa Berbasis QR Code SMP IT Dinamika Umat",
   icons: {
-    icon: "/logo.png",
+    icon: [
+      { url: "/logo.png?v=2", type: "image/png" },
+      { url: "/favicon.ico?v=2" },
+    ],
+    shortcut: "/logo.png?v=2",
+    apple: "/logo.png?v=2",
   },
 };
 
