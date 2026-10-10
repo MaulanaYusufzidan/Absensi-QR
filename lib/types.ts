@@ -26,6 +26,7 @@ export interface Teacher {
   username: string;
   status: TeacherStatus;
   role: Role;
+  kelas?: string;
 }
 
 export interface Schedule {
@@ -63,9 +64,11 @@ export interface Settings {
   ZONA_WAKTU: string;
   DURASI_SESSION: string;
   VALIDASI_JAM: string;
+  JAM_MASUK?: string;
 }
 
 export interface DashboardStats {
+  kelas?: string;
   totalSiswa: number;
   hadir: number;
   terlambat: number;
@@ -73,6 +76,10 @@ export interface DashboardStats {
   sakit: number;
   alpha: number;
   tanpaKeterangan: number;
+  sudahAbsen?: number;
+  belumAbsen?: number;
+  persentaseKehadiran?: string;
+  daftarSiswa?: SessionStudentItem[];
 }
 
 export interface ClassSummary {
@@ -81,6 +88,10 @@ export interface ClassSummary {
   hadir: number;
   terlambat: number;
   belumHadir: number;
+  sudahAbsen?: number;
+  izin?: number;
+  sakit?: number;
+  alpha?: number;
 }
 
 export interface AuthUser {
@@ -88,15 +99,18 @@ export interface AuthUser {
   namaGuru: string;
   username: string;
   role: Role;
+  kelas?: string;
   token: string;
   expiresAt: number;
 }
 
 export interface ScanResult {
   student: Student;
-  schedule: Schedule;
+  schedule?: Schedule;
   status: AttendanceStatus;
   jam: string;
+  tanggal?: string;
+  attendance?: Attendance;
   alreadyRecorded?: {
     jam: string;
     status: AttendanceStatus;
@@ -122,10 +136,17 @@ export interface SessionStudentItem {
   attendance: Attendance | null;
   status: AttendanceStatus | "BELUM_ABSEN";
   jam: string;
+  keterangan?: string;
 }
 
 export interface SessionAttendanceData {
   session: AttendanceSession;
+  items: SessionStudentItem[];
+}
+
+export interface ClassAttendanceData {
+  kelas: string;
+  tanggal: string;
   items: SessionStudentItem[];
 }
 

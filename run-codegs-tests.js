@@ -88,11 +88,11 @@ function buildDb() {
   return {
     SISWA: makeSheet("SISWA", students),
     GURU: makeSheet("GURU", [
-      ["ID_GURU", "NIP", "NAMA_GURU", "USERNAME", "PASSWORD_HASH", "STATUS", "ROLE"],
-      ["G001", "1", "Guru Satu", "guru1", sha256("test-guru-1"), "AKTIF", "GURU"],
-      ["G002", "2", "Guru Dua", "guru2", sha256("test-guru-2"), "AKTIF", "GURU"],
-      ["G003", "3", "Admin Uji", "admin", sha256("test-admin"), "AKTIF", "ADMIN"],
-      ["G004", "4", "Guru Off", "guruoff", sha256("test-off"), "NONAKTIF", "GURU"],
+      ["ID_GURU", "NIP", "NAMA_GURU", "USERNAME", "PASSWORD_HASH", "STATUS", "ROLE", "KELAS"],
+      ["G001", "1", "Guru Satu", "guru1", sha256("test-guru-1"), "AKTIF", "GURU", "7"],
+      ["G002", "2", "Guru Dua", "guru2", sha256("test-guru-2"), "AKTIF", "GURU", "8"],
+      ["G003", "3", "Admin Uji", "admin", sha256("test-admin"), "AKTIF", "ADMIN", ""],
+      ["G004", "4", "Guru Off", "guruoff", sha256("test-off"), "NONAKTIF", "GURU", "7"],
     ]),
     JADWAL: makeSheet("JADWAL", [
       ["ID_JADWAL", "HARI", "JAM_MULAI", "JAM_SELESAI", "KELAS", "MATA_PELAJARAN", "ID_GURU", "STATUS", "TGL_DIBUAT"],
@@ -113,6 +113,7 @@ function buildDb() {
       ["ZONA_WAKTU", "Asia/Jakarta"],
       ["DURASI_SESSION", "120"],
       ["VALIDASI_JAM", "true"],
+      ["JAM_MASUK", "07:00"],
     ]),
   };
 }
@@ -128,7 +129,10 @@ function createSandbox(db, startAt) {
   const ctx = {
     console, Date: FixedDate, JSON, Math, parseInt, String, Object, Array, RegExp, isNaN, Error,
     SpreadsheetApp: {
-      openById: () => ({
+      openById: (id) => ({
+        getId: () => id || "MOCK_SPREADSHEET_ID",
+        getName: () => "Mock Spreadsheet",
+        getSheets: () => Object.keys(db).map((k) => ({ getName: () => k })),
         getSheetByName: (n) => db[n] || null,
         insertSheet: (n) => {
           if (!db[n]) db[n] = makeSheet(n, []);
@@ -136,6 +140,9 @@ function createSandbox(db, startAt) {
         },
       }),
       getActiveSpreadsheet: () => ({
+        getId: () => "ACTIVE_MOCK_SPREADSHEET_ID",
+        getName: () => "Active Mock Spreadsheet",
+        getSheets: () => Object.keys(db).map((k) => ({ getName: () => k })),
         getSheetByName: (n) => db[n] || null,
         insertSheet: (n) => {
           if (!db[n]) db[n] = makeSheet(n, []);
@@ -303,29 +310,34 @@ function run() {
     const sb = fresh();
     assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26005" }, tokenOf(sb, "guru1", "test-guru-1")).code, "STUDENT_INACTIVE");
   });
-  test("class without schedule -> NO_ACTIVE_SCHEDULE", () => {
+  test("student from different class -> WRONG_CLASS", () => {
     const sb = fresh();
-    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26006" }, tokenOf(sb, "guru1", "test-guru-1")).code, "NO_ACTIVE_SCHEDULE");
+    // DU26006 (Fani) is class 8, guru1 is wali kelas 7
+    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26006" }, tokenOf(sb, "guru1", "test-guru-1")).code, "WRONG_CLASS");
   });
-  test("wrong teacher -> NO_ACTIVE_SCHEDULE", () => {
+  test("wrong wali kelas -> WRONG_CLASS", () => {
     const sb = fresh();
-    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, tokenOf(sb, "guru2", "test-guru-2")).code, "NO_ACTIVE_SCHEDULE");
+    // DU26001 (Ahmad) is class 7, guru2 is wali kelas 8
+    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, tokenOf(sb, "guru2", "test-guru-2")).code, "WRONG_CLASS");
   });
-  test("wrong weekday (Tuesday) -> NO_ACTIVE_SCHEDULE", () => {
+  test("daily attendance works on any weekday (no schedule dependency)", () => {
     const sb = fresh(jakarta("2026-10-06", "07:05"));
-    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, tokenOf(sb, "guru1", "test-guru-1")).code, "NO_ACTIVE_SCHEDULE");
+    // Tuesday: no schedule on Tuesday, but daily attendance is schedule-independent
+    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, tokenOf(sb, "guru1", "test-guru-1")).success, true);
   });
-  test("outside time window -> OUT_OF_SCHEDULE_TIME; allowed when VALIDASI_JAM=false", () => {
+  test("daily attendance works outside old schedule time window (TERLAMBAT status applies)", () => {
     const sb = fresh(jakarta("2026-10-05", "10:00"));
     const t = tokenOf(sb, "guru1", "test-guru-1");
-    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, t).code, "OUT_OF_SCHEDULE_TIME");
-    sb.db.PENGATURAN.data[5][1] = "false";
-    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, t).success, true);
+    // At 10:00 with JAM_MASUK 07:00 + limit 15min -> TERLAMBAT
+    const r = sb.call("scanAttendance", { idQr: "DU26001" }, t);
+    assert.strictEqual(r.success, true);
+    assert.strictEqual(r.data.status, "TERLAMBAT");
   });
-  test("inactive schedule is ignored", () => {
+  test("daily attendance works even when schedule is inactive", () => {
     const sb = fresh();
     sb.db.JADWAL.data[1][7] = "NONAKTIF";
-    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, tokenOf(sb, "guru1", "test-guru-1")).code, "NO_ACTIVE_SCHEDULE");
+    // Schedule is inactive but daily attendance is schedule-independent
+    assert.strictEqual(sb.call("scanAttendance", { idQr: "DU26001" }, tokenOf(sb, "guru1", "test-guru-1")).success, true);
   });
   test("busy lock -> SERVER_BUSY", () => {
     const sb = fresh();
@@ -341,16 +353,17 @@ function run() {
   });
 
   console.log("dashboard & history");
-  test("dashboard counts come from sheet data", () => {
+  test("dashboard counts come from sheet data (class-filtered for wali kelas)", () => {
     const sb = fresh();
     const t = tokenOf(sb, "guru1", "test-guru-1");
+    // guru1 is wali kelas 7: 4 active students (Ahmad, Budi, Citra, Dewi; Eko is NONAKTIF)
     sb.call("scanAttendance", { idQr: "DU26001" }, t);
     sb.setNow(jakarta("2026-10-05", "07:20"));
     sb.call("scanAttendance", { idQr: "DU26002" }, t);
     const d = sb.call("getDashboard", {}, t).data;
     assert.deepStrictEqual(
       { total: d.totalSiswa, hadir: d.hadir, terlambat: d.terlambat, tanpa: d.tanpaKeterangan },
-      { total: 5, hadir: 1, terlambat: 1, tanpa: 3 }
+      { total: 4, hadir: 1, terlambat: 1, tanpa: 2 }
     );
   });
   test("getClasses: per-class belumHadir", () => {
@@ -774,6 +787,141 @@ function run() {
     const hGuru1 = sb.call("getAttendance", { tanggal: "2026-10-05" }, tGuru1).data;
     assert.strictEqual(hGuru1.length, 1);
     assert.strictEqual(hGuru1[0].nama, "Ahmad");
+  });
+
+  console.log("daily homeroom attendance migration validation");
+  test("manual attendance first, then QR scan -> DUPLICATE_ATTENDANCE", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+
+    // 1. Guru 1 creates manual attendance for Budi (DU26002, NIS 102)
+    const mRes = sb.call("updateAttendanceStatus", {
+      nis: "102",
+      status: "IZIN",
+      keterangan: "Surat dokter",
+      tanggal: "2026-10-05"
+    }, tGuru1);
+    assert.strictEqual(mRes.success, true);
+    assert.strictEqual(mRes.data.status, "IZIN");
+
+    // 2. Scan attempt for the same student on the same day -> rejected
+    const scanRes = sb.call("scanAttendance", { idQr: "DU26002" }, tGuru1);
+    assert.strictEqual(scanRes.success, false);
+    assert.strictEqual(scanRes.code, "DUPLICATE_ATTENDANCE");
+
+    // 3. Verify exactly 1 attendance record exists for Budi
+    const budiRows = sb.db.ABSENSI.data.filter((r) => r[2] === "DU26002");
+    assert.strictEqual(budiRows.length, 1);
+    assert.strictEqual(budiRows[0][11], "IZIN");
+  });
+
+  test("QR scan first, then manual edit -> updates in-place without duplicate row", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+
+    // 1. Scan Ahmad
+    const scanRes = sb.call("scanAttendance", { idQr: "DU26001" }, tGuru1);
+    assert.strictEqual(scanRes.success, true);
+    assert.strictEqual(scanRes.data.status, "HADIR");
+
+    const countBefore = sb.db.ABSENSI.data.length;
+
+    // 2. Homeroom teacher updates status to TERLAMBAT with note
+    const updateRes = sb.call("updateAttendanceStatus", {
+      nis: "101",
+      status: "TERLAMBAT",
+      keterangan: "Terjebak macet",
+      tanggal: "2026-10-05"
+    }, tGuru1);
+    assert.strictEqual(updateRes.success, true);
+    assert.strictEqual(updateRes.data.status, "TERLAMBAT");
+
+    // Total rows in database must remain unchanged (in-place correction)
+    assert.strictEqual(sb.db.ABSENSI.data.length, countBefore);
+
+    const ahmadRows = sb.db.ABSENSI.data.filter((r) => r[2] === "DU26001");
+    assert.strictEqual(ahmadRows.length, 1);
+    assert.strictEqual(ahmadRows[0][11], "TERLAMBAT");
+    assert.strictEqual(ahmadRows[0][12], "Terjebak macet");
+  });
+
+  test("same QR code can be reused on the next day", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+
+    // Day 1: 2026-10-05 (Monday)
+    const scanDay1 = sb.call("scanAttendance", { idQr: "DU26001" }, tGuru1);
+    assert.strictEqual(scanDay1.success, true);
+
+    // Advance clock to Day 2: 2026-10-06 (Tuesday 07:05)
+    sb.setNow(jakarta("2026-10-06", "07:05"));
+    const tGuru1Day2 = tokenOf(sb, "guru1", "test-guru-1");
+
+    // Day 2 scan with the same permanent QR
+    const scanDay2 = sb.call("scanAttendance", { idQr: "DU26001" }, tGuru1Day2);
+    assert.strictEqual(scanDay2.success, true);
+    assert.strictEqual(scanDay2.data.tanggal, "2026-10-06");
+
+    // There should now be two distinct daily attendance rows for Ahmad
+    const ahmadRows = sb.db.ABSENSI.data.filter((r) => r[2] === "DU26001");
+    assert.strictEqual(ahmadRows.length, 2);
+    assert.strictEqual(ahmadRows[0][6], "2026-10-05");
+    assert.strictEqual(ahmadRows[1][6], "2026-10-06");
+  });
+
+  test("payload manipulation cannot bypass class restrictions in manual attendance", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1"); // Class 7 teacher
+
+    // Fani is in Class 8 (NIS 106)
+    const hackAttempt = sb.call("updateAttendanceStatus", {
+      nis: "106",
+      status: "HADIR",
+      kelas: "7", // Tampered parameter attempting to fake class
+      tanggal: "2026-10-05"
+    }, tGuru1);
+
+    assert.strictEqual(hackAttempt.success, false);
+    assert.strictEqual(hackAttempt.code, "WRONG_CLASS");
+  });
+
+  test("historical records with old ID_JADWAL and MATA_PELAJARAN remain readable", () => {
+    const sb = fresh();
+    const tGuru1 = tokenOf(sb, "guru1", "test-guru-1");
+
+    // Inject historical attendance row from previous subject-based system
+    sb.db.ABSENSI.data.push([
+      "ABS_HIST_01",
+      "J001",
+      "DU26001",
+      "101",
+      "Ahmad",
+      "7",
+      "2026-09-01",
+      "08:30",
+      "Matematika",
+      "G001",
+      "Guru Satu",
+      "HADIR",
+      "Sesi Pelajaran 1"
+    ]);
+
+    // Read attendance for the historical date
+    const hist = sb.call("getAttendance", { tanggal: "2026-09-01" }, tGuru1);
+    assert.strictEqual(hist.success, true);
+    assert.strictEqual(hist.data.length, 1);
+    assert.strictEqual(hist.data[0].idJadwal, "J001");
+    assert.strictEqual(hist.data[0].mataPelajaran, "Matematika");
+    assert.strictEqual(hist.data[0].nama, "Ahmad");
+
+    // Read recap across date range including historical date
+    const recap = sb.call("getAttendanceRecap", {
+      tanggalMulai: "2026-09-01",
+      tanggalAkhir: "2026-09-01"
+    }, tGuru1);
+    assert.strictEqual(recap.success, true);
+    assert.strictEqual(recap.data.detail.length, 1);
+    assert.strictEqual(recap.data.detail[0].mataPelajaran, "Matematika");
   });
 
   console.log("\n" + pass + "/" + (pass + failures.length) + " passed");

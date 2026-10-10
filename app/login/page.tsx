@@ -52,8 +52,8 @@ export default function LoginPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-foreground">SMP IT Dinamika Umat</h1>
-            <p className="text-sm font-medium text-primary">Sistem Absensi Guru & Siswa</p>
-            <p className="mt-1 text-xs text-muted">Masuk dengan akun Guru / Admin</p>
+            <p className="text-sm font-medium text-primary">Sistem Absensi Harian</p>
+            <p className="mt-1 text-xs text-muted">Masuk dengan akun Wali Kelas / Admin</p>
           </div>
         </div>
 

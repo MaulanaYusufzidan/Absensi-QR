@@ -31,7 +31,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/scan", label: "Scan QR", icon: ScanLine, roles: ["GURU", "ADMIN"] },
   { href: "/manual-attendance", label: "Absensi Manual", icon: UserCheck, roles: ["GURU", "ADMIN"] },
   { href: "/attendance", label: "Laporan Absensi", icon: ClipboardList, roles: ["GURU", "ADMIN"] },
-  { href: "/schedule", label: "Jadwal", icon: CalendarDays, roles: ["GURU", "ADMIN"] },
+  { href: "/schedule", label: "Jadwal", icon: CalendarDays, roles: ["ADMIN"] },
   { href: "/students", label: "Siswa", icon: Users, roles: ["ADMIN"] },
   { href: "/teachers", label: "Guru", icon: UserCog, roles: ["ADMIN"] },
   { href: "/qr", label: "QR Cetak", icon: QrCode, roles: ["ADMIN"] },
@@ -43,6 +43,10 @@ export function Sidebar({ mobile, onNavigate }: { mobile?: boolean; onNavigate?:
   const { user, logout } = useAuth();
   const role: Role = user?.role ?? "GURU";
   const items = NAV_ITEMS.filter((item) => item.roles.includes(role));
+
+  const roleLabel = role === "ADMIN"
+    ? "Administrator"
+    : (user?.kelas ? `Wali Kelas ${user.kelas}` : "Wali Kelas");
 
   return (
     <nav
@@ -67,7 +71,7 @@ export function Sidebar({ mobile, onNavigate }: { mobile?: boolean; onNavigate?:
             <span className="block truncate text-sm font-bold leading-tight text-foreground">
               SMP IT Dinamika Umat
             </span>
-            <span className="block text-xs font-semibold text-primary">Sistem Absensi</span>
+            <span className="block text-xs font-semibold text-primary">Sistem Absensi Harian</span>
           </div>
         </div>
         <ul className="flex flex-col gap-1 px-3 mt-3">
@@ -96,7 +100,7 @@ export function Sidebar({ mobile, onNavigate }: { mobile?: boolean; onNavigate?:
       <div className="border-t border-gray-200 p-4">
         <div className="mb-3 px-2">
           <p className="truncate text-sm font-semibold">{user?.namaGuru}</p>
-          <p className="text-xs text-muted">{role === "ADMIN" ? "Admin" : "Guru"}</p>
+          <p className="text-xs font-medium text-primary">{roleLabel}</p>
         </div>
         <button
           onClick={logout}

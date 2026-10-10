@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { RefreshCw, CameraOff, Camera, Upload, ShieldAlert, Sparkles } from "lucide-react";
+import { RefreshCw, CameraOff, Camera } from "lucide-react";
 import type { Html5Qrcode } from "html5-qrcode";
 
 interface QRScannerProps {
@@ -45,15 +45,7 @@ export function QRScanner({ active, onScan }: QRScannerProps) {
   const [activeCameraLabel, setActiveCameraLabel] = useState<string>("");
   const [starting, setStarting] = useState(false);
   const [scanningFile, setScanningFile] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    onScanRef.current = onScan;
-  }, [onScan]);
-
-  useEffect(() => {
-    setIsMobile(isMobileDevice());
-  }, []);
+  const [isMobile] = useState<boolean>(() => isMobileDevice());
 
   const handleDecoded = useCallback((text: string) => {
     if (firedRef.current) return;
@@ -317,7 +309,9 @@ export function QRScanner({ active, onScan }: QRScannerProps) {
       return;
     }
 
-    startCamera();
+    const timer = setTimeout(() => {
+      startCamera();
+    }, 0);
 
     // Listen to orientation change on mobile devices to preserve scanner layout
     const handleOrientationOrResize = () => {
@@ -328,6 +322,7 @@ export function QRScanner({ active, onScan }: QRScannerProps) {
     window.addEventListener("resize", handleOrientationOrResize);
 
     return () => {
+      clearTimeout(timer);
       window.removeEventListener("orientationchange", handleOrientationOrResize);
       window.removeEventListener("resize", handleOrientationOrResize);
       stopScannerSafely();

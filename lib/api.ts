@@ -12,6 +12,7 @@ export type ApiAction =
   | "getTodaySchedule"
   | "scanAttendance"
   | "getAttendance"
+  | "getClassAttendance"
   | "getClasses"
   | "getSettings"
   | "getTeachers"

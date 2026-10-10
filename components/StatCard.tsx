@@ -1,6 +1,6 @@
 import { cx } from "@/lib/utils";
 
-type Tone = "success" | "warning" | "danger" | "secondary" | "neutral";
+type Tone = "primary" | "success" | "warning" | "danger" | "secondary" | "neutral";
 
 interface StatCardProps {
   label: string;
@@ -10,6 +10,7 @@ interface StatCardProps {
 }
 
 const TONE_STYLES: Record<Tone, string> = {
+  primary: "bg-primary text-white",
   success: "bg-success text-white",
   warning: "bg-warning text-gray-900",
   danger: "bg-danger text-white",
