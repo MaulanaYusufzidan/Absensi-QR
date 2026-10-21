@@ -14,6 +14,7 @@ import {
   QrCode,
   Settings,
   LogOut,
+  Trophy,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cx } from "@/lib/utils";
@@ -31,6 +32,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/scan", label: "Scan QR", icon: ScanLine, roles: ["GURU", "ADMIN"] },
   { href: "/manual-attendance", label: "Absensi Manual", icon: UserCheck, roles: ["GURU", "ADMIN"] },
   { href: "/attendance", label: "Laporan Absensi", icon: ClipboardList, roles: ["GURU", "ADMIN"] },
+  { href: "/spk", label: "SPK Kedisiplinan", icon: Trophy, roles: ["GURU", "ADMIN"] },
   { href: "/schedule", label: "Jadwal", icon: CalendarDays, roles: ["ADMIN"] },
   { href: "/students", label: "Siswa", icon: Users, roles: ["ADMIN"] },
   { href: "/teachers", label: "Guru", icon: UserCog, roles: ["ADMIN"] },
