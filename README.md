@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Absensi Siswa QR
 
 Aplikasi absensi siswa berbasis QR. Frontend Next.js (App Router, TypeScript, Tailwind v4),
